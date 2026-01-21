@@ -303,7 +303,7 @@ impl App {
                     self.loading_what = None;
                 }
                 AsyncMsg::Message(m) => {
-                    self.message = Some(m);
+                    self.set_message(m);
                 }
             }
         }
