@@ -349,11 +349,13 @@ impl Client {
     }
 
     pub async fn rerun_workflow(&self, owner: &str, repo: &str, run_id: u64) -> Result<()> {
+        // First try to rerun only failed jobs
         let output = tokio::process::Command::new("gh")
             .args([
                 "run",
                 "rerun",
                 &run_id.to_string(),
+                "--failed",
                 "--repo",
                 &format!("{}/{}", owner, repo),
             ])
@@ -364,10 +366,27 @@ impl Client {
         if output.status.success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!(
-                "gh run rerun failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
+            // If --failed doesn't work (e.g., no failed jobs), try full rerun
+            let output = tokio::process::Command::new("gh")
+                .args([
+                    "run",
+                    "rerun",
+                    &run_id.to_string(),
+                    "--repo",
+                    &format!("{}/{}", owner, repo),
+                ])
+                .output()
+                .await
+                .context("Failed to run gh run rerun")?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "gh run rerun failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
         }
     }
 }

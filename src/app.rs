@@ -45,6 +45,7 @@ pub enum PrFilter {
 
 // Messages for async operations
 pub enum AsyncMsg {
+    UserLoaded(String),
     PrsLoaded(Vec<PullRequest>),
     RunsLoaded(Vec<WorkflowRun>),
     DiffLoaded(String),
@@ -62,9 +63,11 @@ pub struct App {
     pub repo: String,
     pub owner: String,
     pub repo_name: String,
+    pub current_user: Option<String>,
 
     // PR state
-    pub prs: Vec<PullRequest>,
+    pub all_prs: Vec<PullRequest>,  // All PRs from API
+    pub prs: Vec<PullRequest>,       // Filtered PRs for display
     pub pr_list_state: ListState,
     pub selected_pr: Option<PullRequest>,
     pub pr_diff: Option<String>,
@@ -148,6 +151,7 @@ impl App {
         self.loading_what = Some("Loading PRs and workflows...".to_string());
         terminal.draw(|f| ui::render(f, self))?;
 
+        self.spawn_fetch_current_user();
         self.spawn_fetch_prs();
         self.spawn_fetch_runs();
 
@@ -176,63 +180,103 @@ impl App {
     }
 
     fn process_async_messages(&mut self) {
-        if let Some(ref mut rx) = self.async_rx {
+        // Collect messages first to avoid borrow issues
+        let messages: Vec<AsyncMsg> = if let Some(ref mut rx) = self.async_rx {
+            let mut msgs = Vec::new();
             while let Ok(msg) = rx.try_recv() {
-                match msg {
-                    AsyncMsg::PrsLoaded(prs) => {
-                        self.prs = prs;
-                        if !self.prs.is_empty() && self.pr_list_state.selected().is_none() {
-                            self.pr_list_state.select(Some(0));
-                        }
-                        self.loading = false;
-                        self.loading_what = None;
-                    }
-                    AsyncMsg::RunsLoaded(runs) => {
-                        self.runs = runs;
-                        if !self.runs.is_empty() && self.run_list_state.selected().is_none() {
-                            self.run_list_state.select(Some(0));
-                        }
-                    }
-                    AsyncMsg::DiffLoaded(diff) => {
-                        self.pr_diff = Some(diff);
-                        self.loading = false;
-                        self.loading_what = None;
-                    }
-                    AsyncMsg::PrChecksLoaded(checks) => {
-                        self.pr_checks = checks;
-                        if !self.pr_checks.is_empty() && self.pr_checks_state.selected().is_none() {
-                            self.pr_checks_state.select(Some(0));
-                        }
-                    }
-                    AsyncMsg::JobsLoaded(jobs) => {
-                        self.jobs = jobs;
-                        if !self.jobs.is_empty() && self.job_list_state.selected().is_none() {
-                            self.job_list_state.select(Some(0));
-                        }
-                        self.loading = false;
-                        self.loading_what = None;
-                    }
-                    AsyncMsg::LogsLoaded(logs) => {
-                        self.logs = logs;
-                        self.log_scroll = 0;
-                        self.log_h_scroll = 0;
-                        self.loading = false;
-                        self.loading_what = None;
-                    }
-                    AsyncMsg::Error(e) => {
-                        self.error = Some(e);
-                        self.loading = false;
-                        self.loading_what = None;
-                    }
-                    AsyncMsg::Message(m) => {
-                        self.message = Some(m);
+                msgs.push(msg);
+            }
+            msgs
+        } else {
+            Vec::new()
+        };
+
+        let mut needs_filter = false;
+
+        for msg in messages {
+            match msg {
+                AsyncMsg::UserLoaded(user) => {
+                    self.current_user = Some(user);
+                    needs_filter = true;
+                }
+                AsyncMsg::PrsLoaded(prs) => {
+                    self.all_prs = prs;
+                    needs_filter = true;
+                    self.loading = false;
+                    self.loading_what = None;
+                }
+                AsyncMsg::RunsLoaded(runs) => {
+                    self.runs = runs;
+                    if !self.runs.is_empty() && self.run_list_state.selected().is_none() {
+                        self.run_list_state.select(Some(0));
                     }
                 }
+                AsyncMsg::DiffLoaded(diff) => {
+                    self.pr_diff = Some(diff);
+                    self.loading = false;
+                    self.loading_what = None;
+                }
+                AsyncMsg::PrChecksLoaded(checks) => {
+                    self.pr_checks = checks;
+                    if !self.pr_checks.is_empty() && self.pr_checks_state.selected().is_none() {
+                        self.pr_checks_state.select(Some(0));
+                    }
+                }
+                AsyncMsg::JobsLoaded(jobs) => {
+                    self.jobs = jobs;
+                    if !self.jobs.is_empty() && self.job_list_state.selected().is_none() {
+                        self.job_list_state.select(Some(0));
+                    }
+                    self.loading = false;
+                    self.loading_what = None;
+                }
+                AsyncMsg::LogsLoaded(logs) => {
+                    self.logs = logs;
+                    self.log_scroll = 0;
+                    self.log_h_scroll = 0;
+                    self.loading = false;
+                    self.loading_what = None;
+                }
+                AsyncMsg::Error(e) => {
+                    self.error = Some(e);
+                    self.loading = false;
+                    self.loading_what = None;
+                }
+                AsyncMsg::Message(m) => {
+                    self.message = Some(m);
+                }
             }
+        }
+
+        if needs_filter {
+            self.apply_pr_filter();
         }
     }
 
     // Spawn async tasks for fetching data
+    fn spawn_fetch_current_user(&self) {
+        if let Some(tx) = self.async_tx.clone() {
+            tokio::spawn(async move {
+                let output = tokio::process::Command::new("gh")
+                    .args(["api", "user", "--jq", ".login"])
+                    .output()
+                    .await;
+
+                match output {
+                    Ok(o) if o.status.success() => {
+                        let user = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                        if !user.is_empty() {
+                            let _ = tx.send(AsyncMsg::UserLoaded(user));
+                        }
+                    }
+                    _ => {
+                        // Silently ignore - filter will just show all PRs
+                    }
+                }
+            });
+        }
+    }
+
     fn spawn_fetch_prs(&self) {
         if let (Some(client), Some(tx)) = (self.client.clone(), self.async_tx.clone()) {
             let owner = self.owner.clone();
@@ -480,9 +524,6 @@ impl App {
                 }
                 KeyCode::Char('f') => {
                     self.cycle_filter();
-                    self.loading = true;
-                    self.loading_what = Some("Filtering PRs...".to_string());
-                    self.spawn_fetch_prs();
                 }
                 KeyCode::Char('R') => {
                     // Rerun selected PR check
@@ -694,6 +735,46 @@ impl App {
             PrFilter::Mine => PrFilter::ReviewRequested,
             PrFilter::ReviewRequested => PrFilter::All,
         };
+        self.apply_pr_filter();
+    }
+
+    fn apply_pr_filter(&mut self) {
+        let current_user = self.current_user.as_deref();
+
+        self.prs = match self.pr_filter {
+            PrFilter::All => self.all_prs.clone(),
+            PrFilter::Mine => {
+                if let Some(user) = current_user {
+                    self.all_prs
+                        .iter()
+                        .filter(|pr| pr.user.login == user)
+                        .cloned()
+                        .collect()
+                } else {
+                    self.all_prs.clone()
+                }
+            }
+            PrFilter::ReviewRequested => {
+                if let Some(user) = current_user {
+                    self.all_prs
+                        .iter()
+                        .filter(|pr| pr.requested_reviewers.iter().any(|r| r.login == user))
+                        .cloned()
+                        .collect()
+                } else {
+                    self.all_prs.clone()
+                }
+            }
+        };
+
+        // Reset selection if needed
+        if self.prs.is_empty() {
+            self.pr_list_state.select(None);
+        } else if self.pr_list_state.selected().is_none()
+            || self.pr_list_state.selected().unwrap() >= self.prs.len()
+        {
+            self.pr_list_state.select(Some(0));
+        }
     }
 
     // Data fetching (now async)
@@ -970,6 +1051,8 @@ impl Default for App {
             repo: String::new(),
             owner: String::new(),
             repo_name: String::new(),
+            current_user: None,
+            all_prs: Vec::new(),
             prs: Vec::new(),
             pr_list_state: ListState::default(),
             selected_pr: None,
