@@ -12,26 +12,7 @@ A fast terminal UI for GitHub workflows built in Rust with Ratatui.
 
 ## Screenshot
 
-```
-+-------------------------------------------------------------+
-|  [1] PRs    [2] Actions    [3] Logs        shopsys/shopsys  |
-+-------------------------------------------------------------+
-|                                                              |
-|  +- PRs (All) ---------------+ +- PR Details --------------+ |
-|  | > #4395 Doctrine annot... | | #4395 Doctrine annotations | |
-|  |   #4394 Added upgrade     | | Author: TomasLud662         | |
-|  |   #4393 Removed direct... | | Branch: doctrine-attributes | |
-|  |   #4392 Dropped support   | | Status: O Open | CI: O      | |
-|  |                           | |                             | |
-|  |                           | | --- src/Entity/Product.php  | |
-|  |                           | | -/** @ORM\Entity */         | |
-|  |                           | | +#[ORM\Entity]              | |
-|  +---------------------------+ +-----------------------------+ |
-|                                                              |
-+-------------------------------------------------------------+
-| j/k:nav  h/l:panel  Enter:detail  v:approve  d:diff  ?:help |
-+-------------------------------------------------------------+
-```
+<img width="1763" height="1221" alt="GitHub TUI screenshot example" src="https://github.com/user-attachments/assets/c84aeb11-5589-41c3-bfc1-d2007e8a277f" />
 
 ## Installation
 
