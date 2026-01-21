@@ -295,19 +295,21 @@ impl Client {
         run_id: u64,
         job_id: Option<u64>,
     ) -> Result<String> {
-        // Use gh CLI for logs - async version
-        let mut args = vec![
-            "run".to_string(),
-            "view".to_string(),
-            run_id.to_string(),
-            "--repo".to_string(),
-            format!("{}/{}", owner, repo),
-            "--log".to_string(),
+        let repo_arg = format!("{}/{}", owner, repo);
+        let run_id_str = run_id.to_string();
+
+        // Try --log first (works for completed runs)
+        let mut args: Vec<&str> = vec![
+            "run", "view",
+            &run_id_str,
+            "--repo", &repo_arg,
+            "--log",
         ];
 
-        if let Some(jid) = job_id {
-            args.push("--job".to_string());
-            args.push(jid.to_string());
+        let job_id_str = job_id.map(|jid| jid.to_string());
+        if let Some(ref jid_str) = job_id_str {
+            args.push("--job");
+            args.push(jid_str);
         }
 
         let output = tokio::process::Command::new("gh")
@@ -317,35 +319,37 @@ impl Client {
             .context("Failed to run gh run view --log")?;
 
         if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            // Try with --log-failed for failed runs
-            let last = args.pop();
-            if last == Some("--log".to_string()) {
-                args.push("--log-failed".to_string());
-            } else {
-                // Had job_id, need to adjust
-                args.pop(); // remove job_id
-                args.pop(); // remove --job
-                args.pop(); // remove --log
-                args.push("--log-failed".to_string());
-            }
-
-            let output = tokio::process::Command::new("gh")
-                .args(&args)
-                .output()
-                .await
-                .context("Failed to run gh run view --log-failed")?;
-
-            if output.status.success() {
-                Ok(String::from_utf8_lossy(&output.stdout).to_string())
-            } else {
-                Err(anyhow::anyhow!(
-                    "gh run view failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ))
-            }
+            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
+
+        // Try --log-failed for runs that have failures
+        let args_failed: Vec<&str> = vec![
+            "run", "view",
+            &run_id_str,
+            "--repo", &repo_arg,
+            "--log-failed",
+        ];
+
+        let output = tokio::process::Command::new("gh")
+            .args(&args_failed)
+            .output()
+            .await
+            .context("Failed to run gh run view --log-failed")?;
+
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+        }
+
+        // For in-progress runs, logs may not be available yet
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("in progress") || stderr.contains("queued") {
+            return Ok("Run is still in progress. Logs will be available when the run completes or a job finishes.".to_string());
+        }
+
+        Err(anyhow::anyhow!(
+            "gh run view failed: {}",
+            stderr
+        ))
     }
 
     pub async fn rerun_workflow(&self, owner: &str, repo: &str, run_id: u64) -> Result<()> {

@@ -490,7 +490,7 @@ impl App {
                         self.focus = Focus::Detail;
                     } else if self.focus == Focus::PrChecks {
                         // View logs for selected check
-                        self.view_pr_check_logs();
+                        self.view_pr_check_jobs();
                     }
                 }
                 KeyCode::Esc => {
@@ -531,7 +531,7 @@ impl App {
                 }
                 KeyCode::Char('L') => {
                     // View logs for selected PR check
-                    self.view_pr_check_logs();
+                    self.view_pr_check_jobs();
                 }
                 _ => {}
             },
@@ -821,14 +821,16 @@ impl App {
         }
     }
 
-    fn view_pr_check_logs(&mut self) {
+    fn view_pr_check_jobs(&mut self) {
         if let Some(i) = self.pr_checks_state.selected() {
             if let Some(check) = self.pr_checks.get(i) {
                 self.selected_run = Some(check.clone());
+                self.job_list_state.select(Some(0));
                 self.loading = true;
-                self.loading_what = Some("Loading logs...".to_string());
-                self.spawn_fetch_logs(check.id, None);
-                self.tab = Tab::Logs;
+                self.loading_what = Some("Loading jobs...".to_string());
+                self.spawn_fetch_jobs(check.id);
+                self.tab = Tab::Actions;
+                self.view = View::Jobs;
             }
         }
     }
