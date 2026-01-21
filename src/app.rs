@@ -66,6 +66,7 @@ pub enum AsyncMsg {
     Message(String),
 }
 
+#[derive(Default)]
 pub struct App {
     pub tab: Tab,
     pub view: View,
@@ -527,7 +528,10 @@ impl App {
                     self.input_buffer.pop();
                 }
                 KeyCode::Char(c) => {
-                    self.input_buffer.push(c);
+                    // Limit input buffer to prevent unbounded memory usage
+                    if self.input_buffer.len() < 1024 {
+                        self.input_buffer.push(c);
+                    }
                 }
                 _ => {}
             }
@@ -1036,8 +1040,10 @@ impl App {
         // Reset selection if needed
         if self.prs.is_empty() {
             self.pr_list_state.select(None);
-        } else if self.pr_list_state.selected().is_none()
-            || self.pr_list_state.selected().unwrap() >= self.prs.len()
+        } else if self
+            .pr_list_state
+            .selected()
+            .is_none_or(|idx| idx >= self.prs.len())
         {
             self.pr_list_state.select(Some(0));
         }
@@ -1570,53 +1576,3 @@ impl App {
     }
 }
 
-impl Default for App {
-    fn default() -> Self {
-        Self {
-            tab: Tab::default(),
-            view: View::default(),
-            focus: Focus::default(),
-            repo: String::new(),
-            owner: String::new(),
-            repo_name: String::new(),
-            current_user: None,
-            all_prs: Vec::new(),
-            prs: Vec::new(),
-            pr_list_state: ListState::default(),
-            selected_pr: None,
-            pr_diff: None,
-            pr_filter: PrFilter::default(),
-            diff_scroll: 0,
-            pr_checks: Vec::new(),
-            pr_checks_state: ListState::default(),
-            diff_mode: DiffMode::default(),
-            pr_commits: Vec::new(),
-            pr_commits_state: ListState::default(),
-            commit_diff: None,
-            runs: Vec::new(),
-            run_list_state: ListState::default(),
-            selected_run: None,
-            jobs: Vec::new(),
-            job_list_state: ListState::default(),
-            logs: String::new(),
-            log_scroll: 0,
-            log_h_scroll: 0,
-            log_search: None,
-            log_matches: Vec::new(),
-            log_match_index: 0,
-            loading: false,
-            loading_what: None,
-            error: None,
-            status_message: None,
-            should_quit: false,
-            show_help: false,
-            input_mode: None,
-            input_buffer: String::new(),
-            matrix_rain: MatrixRain::default(),
-            initial_pr: None,
-            client: None,
-            async_rx: None,
-            async_tx: None,
-        }
-    }
-}

@@ -264,28 +264,6 @@ impl Client {
         }
     }
 
-    pub async fn open_pr_in_browser(&self, owner: &str, repo: &str, number: u64) -> Result<()> {
-        let output = tokio::process::Command::new("gh")
-            .args([
-                "pr", "view",
-                &number.to_string(),
-                "--repo", &format!("{}/{}", owner, repo),
-                "--web",
-            ])
-            .output()
-            .await
-            .context("Failed to run gh pr view --web")?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "gh pr view --web failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
-    }
-
     pub async fn list_runs(&self, owner: &str, repo: &str) -> Result<Vec<WorkflowRun>> {
         let runs = self
             .octocrab

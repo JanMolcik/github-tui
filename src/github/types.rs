@@ -139,11 +139,6 @@ impl WorkflowRun {
             },
         }
     }
-
-    pub fn time_ago(&self) -> String {
-        // Simplified time ago - in a real app, parse and calculate
-        self.updated_at.clone()
-    }
 }
 
 impl Job {

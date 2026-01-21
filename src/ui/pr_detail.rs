@@ -392,8 +392,8 @@ fn extract_filename_from_diff_line(line: &str) -> Option<String> {
     if parts.len() >= 4 {
         // Get the b/path part and remove the "b/" prefix
         let b_path = parts[3];
-        if b_path.starts_with("b/") {
-            return Some(b_path[2..].to_string());
+        if let Some(stripped) = b_path.strip_prefix("b/") {
+            return Some(stripped.to_string());
         }
         return Some(b_path.to_string());
     }
