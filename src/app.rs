@@ -122,6 +122,9 @@ pub struct App {
     // Matrix rain animation
     pub matrix_rain: MatrixRain,
 
+    // Initial PR to select (from CLI argument)
+    pub initial_pr: Option<u64>,
+
     // GitHub client
     pub client: Option<Client>,
 
@@ -221,6 +224,7 @@ impl App {
         };
 
         let mut needs_filter = false;
+        let mut needs_select_pr: Option<u64> = None;
 
         for msg in messages {
             match msg {
@@ -233,6 +237,11 @@ impl App {
                     needs_filter = true;
                     self.loading = false;
                     self.loading_what = None;
+
+                    // Handle initial PR selection from CLI argument
+                    if let Some(pr_number) = self.initial_pr.take() {
+                        needs_select_pr = Some(pr_number);
+                    }
                 }
                 AsyncMsg::RunsLoaded(runs) => {
                     self.runs = runs;
@@ -291,6 +300,11 @@ impl App {
 
         if needs_filter {
             self.apply_pr_filter();
+        }
+
+        // Select initial PR if specified
+        if let Some(pr_number) = needs_select_pr {
+            self.select_pr_by_number(pr_number);
         }
     }
 
@@ -636,6 +650,14 @@ impl App {
                     // Open PR in browser
                     self.open_pr_in_browser();
                 }
+                KeyCode::Char('y') => {
+                    // Copy branch name to clipboard
+                    self.copy_branch_to_clipboard();
+                }
+                KeyCode::Char('Y') => {
+                    // Copy checkout command to clipboard
+                    self.copy_checkout_command_to_clipboard();
+                }
                 KeyCode::Char('p') => {
                     // Toggle diff mode (Full <-> ByCommit)
                     self.toggle_diff_mode();
@@ -950,6 +972,18 @@ impl App {
         }
     }
 
+    fn select_pr_by_number(&mut self, pr_number: u64) {
+        // Find the PR in the filtered list
+        if let Some(idx) = self.prs.iter().position(|pr| pr.number == pr_number) {
+            self.pr_list_state.select(Some(idx));
+            self.select_pr();
+            self.view = View::Detail;
+            self.focus = Focus::Detail;
+        } else {
+            self.error = Some(format!("PR #{} not found in current filter", pr_number));
+        }
+    }
+
     // Data fetching (now async)
     fn select_pr(&mut self) {
         if let Some(i) = self.pr_list_state.selected() {
@@ -1224,6 +1258,86 @@ impl App {
         }
     }
 
+    fn copy_branch_to_clipboard(&mut self) {
+        if let Some(pr) = &self.selected_pr {
+            let branch = &pr.head.ref_name;
+            if Self::copy_to_clipboard(branch) {
+                self.message = Some(format!("Copied branch: {}", branch));
+            } else {
+                self.error = Some("Failed to copy to clipboard".to_string());
+            }
+        }
+    }
+
+    fn copy_checkout_command_to_clipboard(&mut self) {
+        if let Some(pr) = &self.selected_pr {
+            let cmd = format!("git checkout {}", pr.head.ref_name);
+            if Self::copy_to_clipboard(&cmd) {
+                self.message = Some(format!("Copied: {}", cmd));
+            } else {
+                self.error = Some("Failed to copy to clipboard".to_string());
+            }
+        }
+    }
+
+    fn copy_to_clipboard(text: &str) -> bool {
+        // Try different clipboard commands based on platform
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("pbcopy")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    if let Some(stdin) = child.stdin.as_mut() {
+                        stdin.write_all(text.as_bytes())?;
+                    }
+                    child.wait()
+                })
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // Try xclip first, then xsel
+            std::process::Command::new("xclip")
+                .args(["-selection", "clipboard"])
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    if let Some(stdin) = child.stdin.as_mut() {
+                        stdin.write_all(text.as_bytes())?;
+                    }
+                    child.wait()
+                })
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("clip")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    use std::io::Write;
+                    if let Some(stdin) = child.stdin.as_mut() {
+                        stdin.write_all(text.as_bytes())?;
+                    }
+                    child.wait()
+                })
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            false
+        }
+    }
+
     fn open_pr_in_browser(&mut self) {
         if let Some(pr) = &self.selected_pr {
             let pr_number = pr.number;
@@ -1412,6 +1526,7 @@ impl Default for App {
             input_mode: None,
             input_buffer: String::new(),
             matrix_rain: MatrixRain::default(),
+            initial_pr: None,
             client: None,
             async_rx: None,
             async_tx: None,

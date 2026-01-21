@@ -71,6 +71,14 @@ pub fn render(frame: &mut Frame, _app: &App) {
             Span::styled("Checkout PR branch", styles::TEXT_NORMAL),
         ]),
         Line::from(vec![
+            Span::styled("  y        ", styles::TAB_ACTIVE),
+            Span::styled("Copy branch name to clipboard", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
+            Span::styled("  Y        ", styles::TAB_ACTIVE),
+            Span::styled("Copy checkout command to clipboard", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
             Span::styled("  f        ", styles::TAB_ACTIVE),
             Span::styled("Cycle filter (All/Mine/Review)", styles::TEXT_NORMAL),
         ]),
