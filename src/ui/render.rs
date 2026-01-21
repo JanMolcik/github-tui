@@ -141,7 +141,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 _ => match app.focus {
                     Focus::List => {
                         if app.selected_pr.is_some() {
-                            "j/k:nav  Enter:detail  Tab:focus  f:filter  n:new PR  r:refresh  ?:help  q:quit"
+                            "j/k:nav  Enter:detail  o:focus  f:filter  n:new PR  r:refresh  ?:help  q:quit"
                         } else {
                             "j/k:nav  f:filter  n:new PR  r:refresh  ?:help  q:quit"
                         }
@@ -157,7 +157,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                         }
                     }
                     Focus::PrChecks => {
-                        "j/k:nav  Enter/L:jobs  R:rerun  Tab:focus  ?:help  q:quit"
+                        "j/k:nav  Enter/L:jobs  R:rerun  o:focus  ?:help  q:quit"
                     }
                 },
             },

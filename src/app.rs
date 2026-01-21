@@ -524,6 +524,26 @@ impl App {
                 self.refresh();
                 return;
             }
+            KeyCode::Tab => {
+                // Cycle through tabs: PRs -> Actions -> Logs -> PRs
+                self.tab = match self.tab {
+                    Tab::PRs => Tab::Actions,
+                    Tab::Actions => Tab::Logs,
+                    Tab::Logs => Tab::PRs,
+                };
+                self.view = View::List;
+                return;
+            }
+            KeyCode::BackTab => {
+                // Reverse cycle: PRs -> Logs -> Actions -> PRs
+                self.tab = match self.tab {
+                    Tab::PRs => Tab::Logs,
+                    Tab::Actions => Tab::PRs,
+                    Tab::Logs => Tab::Actions,
+                };
+                self.view = View::List;
+                return;
+            }
             KeyCode::Char('n') if self.tab == Tab::PRs && self.view == View::List => {
                 self.create_pr();
                 return;
@@ -566,7 +586,7 @@ impl App {
                         self.focus = Focus::PrChecks;
                     }
                 }
-                KeyCode::Tab => {
+                KeyCode::Char('o') => {
                     // Cycle focus: List -> Detail -> PrChecks -> List
                     self.focus = match self.focus {
                         Focus::List => Focus::Detail,

@@ -16,8 +16,12 @@ pub fn render(frame: &mut Frame, _app: &App) {
         Line::from(Span::styled("Global Keys", styles::TEXT_BOLD)),
         Line::from(""),
         Line::from(vec![
+            Span::styled("  Tab      ", styles::TAB_ACTIVE),
+            Span::styled("Next tab / Shift+Tab: Previous tab", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
             Span::styled("  1/2/3    ", styles::TAB_ACTIVE),
-            Span::styled("Switch tabs (PRs/Actions/Logs)", styles::TEXT_NORMAL),
+            Span::styled("Jump to tab (PRs/Actions/Logs)", styles::TEXT_NORMAL),
         ]),
         Line::from(vec![
             Span::styled("  r        ", styles::TAB_ACTIVE),
@@ -87,7 +91,7 @@ pub fn render(frame: &mut Frame, _app: &App) {
             Span::styled("Create new PR (opens browser)", styles::TEXT_NORMAL),
         ]),
         Line::from(vec![
-            Span::styled("  Tab      ", styles::TAB_ACTIVE),
+            Span::styled("  o        ", styles::TAB_ACTIVE),
             Span::styled("Cycle focus: List -> Detail -> CI Checks", styles::TEXT_NORMAL),
         ]),
         Line::from(vec![
