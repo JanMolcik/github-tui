@@ -29,8 +29,10 @@ pub const SELECTED: Style = Style::new()
 pub const HIGHLIGHT: Style = Style::new().bg(Color::Yellow).fg(Color::Black);
 
 // Borders
-pub const BORDER_ACTIVE: Style = Style::new().fg(Color::Cyan);
-pub const BORDER_INACTIVE: Style = Style::new().fg(Color::DarkGray);
+pub const BORDER_ACTIVE: Style = Style::new()
+    .fg(Color::LightCyan)
+    .add_modifier(Modifier::BOLD);
+pub const BORDER_INACTIVE: Style = Style::new().fg(Color::Rgb(60, 60, 60));
 
 // Text
 pub const TEXT_NORMAL: Style = Style::new().fg(Color::White);

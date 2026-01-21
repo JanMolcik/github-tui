@@ -826,6 +826,16 @@ impl App {
             if let Some(check) = self.pr_checks.get(i) {
                 self.selected_run = Some(check.clone());
                 self.job_list_state.select(Some(0));
+
+                // Find and select this run in the runs list
+                if let Some(run_idx) = self.runs.iter().position(|r| r.id == check.id) {
+                    self.run_list_state.select(Some(run_idx));
+                } else {
+                    // Run not in list - add it at the top and select it
+                    self.runs.insert(0, check.clone());
+                    self.run_list_state.select(Some(0));
+                }
+
                 self.loading = true;
                 self.loading_what = Some("Loading jobs...".to_string());
                 self.spawn_fetch_jobs(check.id);
