@@ -462,6 +462,7 @@ impl App {
                     self.input_mode = None;
                     self.input_buffer.clear();
                     self.message = None;
+                    self.message_time = None;
                 }
                 KeyCode::Enter => {
                     match mode {
@@ -485,6 +486,7 @@ impl App {
                     self.input_mode = None;
                     self.input_buffer.clear();
                     self.message = None;
+                    self.message_time = None;
                 }
                 KeyCode::Backspace => {
                     self.input_buffer.pop();
@@ -632,10 +634,12 @@ impl App {
                 KeyCode::Char('x') => {
                     self.input_mode = Some(InputMode::Comment);
                     self.message = Some("Enter comment for request changes:".to_string());
+                    self.message_time = None;
                 }
                 KeyCode::Char('c') => {
                     self.input_mode = Some(InputMode::Comment);
                     self.message = Some("Enter comment:".to_string());
+                    self.message_time = None;
                 }
                 KeyCode::Char('m') => {
                     self.merge_pr().await;
@@ -660,6 +664,7 @@ impl App {
                         self.input_mode = Some(InputMode::EditTitle);
                         self.input_buffer = self.selected_pr.as_ref().map(|p| p.title.clone()).unwrap_or_default();
                         self.message = Some("Edit PR title:".to_string());
+                        self.message_time = None;
                     }
                 }
                 KeyCode::Char('a') => {
@@ -667,6 +672,7 @@ impl App {
                     if self.selected_pr.is_some() {
                         self.input_mode = Some(InputMode::AddReviewer);
                         self.message = Some("Add reviewer (username):".to_string());
+                        self.message_time = None;
                     }
                 }
                 KeyCode::Char('b') => {
@@ -674,6 +680,7 @@ impl App {
                     if self.selected_pr.is_some() {
                         self.input_mode = Some(InputMode::AddLabel);
                         self.message = Some("Add label:".to_string());
+                        self.message_time = None;
                     }
                 }
                 KeyCode::Char('w') => {
@@ -809,6 +816,7 @@ impl App {
             KeyCode::Char('/') => {
                 self.input_mode = Some(InputMode::Search);
                 self.message = Some("Search:".to_string());
+                self.message_time = None;
             }
             KeyCode::Char('n') => {
                 self.next_log_match();
@@ -1470,6 +1478,7 @@ impl App {
     fn refresh(&mut self) {
         self.error = None;
         self.message = None;
+        self.message_time = None;
         self.loading = true;
 
         match self.tab {
