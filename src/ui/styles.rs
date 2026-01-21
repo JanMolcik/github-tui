@@ -45,9 +45,6 @@ pub const TEXT_BOLD: Style = Style::new()
 pub const ERROR: Style = Style::new().fg(Color::Red).add_modifier(Modifier::BOLD);
 pub const MESSAGE: Style = Style::new().fg(Color::Green);
 
-// Loading
-pub const LOADING: Style = Style::new().fg(Color::Yellow);
-
 // Helper to get status style
 pub fn status_style(status: &str, conclusion: Option<&str>) -> Style {
     match conclusion {

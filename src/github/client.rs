@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use octocrab::Octocrab;
 use std::sync::Arc;
 
-use super::types::{Job, PullRequest, WorkflowRun};
+use super::types::{Commit, Job, PullRequest, WorkflowRun};
 
 #[derive(Clone)]
 pub struct Client {
@@ -499,6 +499,69 @@ impl Client {
                     String::from_utf8_lossy(&output.stderr)
                 ))
             }
+        }
+    }
+
+    pub async fn list_pr_commits(&self, owner: &str, repo: &str, number: u64) -> Result<Vec<Commit>> {
+        let output = tokio::process::Command::new("gh")
+            .args([
+                "pr",
+                "view",
+                &number.to_string(),
+                "--repo",
+                &format!("{}/{}", owner, repo),
+                "--json",
+                "commits",
+                "--jq",
+                ".commits[] | [.oid, .messageHeadline, .authors[0].login // \"unknown\", .committedDate] | @tsv",
+            ])
+            .output()
+            .await
+            .context("Failed to run gh pr view")?;
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let commits: Vec<Commit> = stdout
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    let parts: Vec<&str> = line.split('\t').collect();
+                    Commit {
+                        sha: parts.first().unwrap_or(&"").to_string(),
+                        message: parts.get(1).unwrap_or(&"").to_string(),
+                        author: parts.get(2).unwrap_or(&"unknown").to_string(),
+                        date: parts.get(3).unwrap_or(&"").to_string(),
+                    }
+                })
+                .collect();
+            Ok(commits)
+        } else {
+            Err(anyhow::anyhow!(
+                "gh pr view failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    pub async fn get_commit_diff(&self, owner: &str, repo: &str, sha: &str) -> Result<String> {
+        let output = tokio::process::Command::new("gh")
+            .args([
+                "api",
+                &format!("repos/{}/{}/commits/{}", owner, repo, sha),
+                "--header",
+                "Accept: application/vnd.github.v3.diff",
+            ])
+            .output()
+            .await
+            .context("Failed to run gh api for commit diff")?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow::anyhow!(
+                "Failed to get commit diff: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
         }
     }
 }

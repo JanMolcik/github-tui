@@ -34,9 +34,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_input(frame, app);
     }
 
-    // Render loading overlay
+    // Render loading overlay with matrix rain effect
     if app.loading {
-        render_loading(frame);
+        render_loading(frame, app);
     }
 }
 
@@ -123,6 +123,8 @@ fn render_actions_content(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    use crate::app::{DiffMode, Focus};
+
     // Error or message display
     let status_line = if let Some(ref err) = app.error {
         Line::from(vec![
@@ -132,17 +134,38 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     } else if let Some(ref msg) = app.message {
         Line::from(Span::styled(msg.as_str(), styles::MESSAGE))
     } else {
-        // Context-sensitive help
+        // Context-sensitive help based on tab, view, and focus
         let help_text = match app.tab {
             Tab::PRs => match app.view {
-                View::Diff => "j/k:scroll  Esc:back  ?:help  q:quit",
-                _ => "j/k:nav  h/l:panel  Enter:detail  v:approve  d:diff  r:refresh  ?:help  q:quit",
+                View::Diff => "j/k:scroll  PgUp/PgDn:fast  Esc:back  ?:help  q:quit",
+                _ => match app.focus {
+                    Focus::List => {
+                        if app.selected_pr.is_some() {
+                            "j/k:nav  Enter:detail  Tab:focus  f:filter  n:new PR  r:refresh  ?:help  q:quit"
+                        } else {
+                            "j/k:nav  f:filter  n:new PR  r:refresh  ?:help  q:quit"
+                        }
+                    }
+                    Focus::Detail => {
+                        match app.diff_mode {
+                            DiffMode::Full => {
+                                "j/k:scroll  p:commits  v:approve  m:merge  e:title  a:reviewer  b:label  d:diff  ?:help"
+                            }
+                            DiffMode::ByCommit => {
+                                "j/k:scroll  [/]:prev/next commit  p:full diff  v:approve  m:merge  ?:help"
+                            }
+                        }
+                    }
+                    Focus::PrChecks => {
+                        "j/k:nav  Enter/L:jobs  R:rerun  Tab:focus  ?:help  q:quit"
+                    }
+                },
             },
             Tab::Actions => match app.view {
                 View::Jobs => "j/k:nav  Enter/L:logs  R:rerun  Esc:back  ?:help  q:quit",
                 _ => "j/k:nav  Enter:jobs  R:rerun  r:refresh  ?:help  q:quit",
             },
-            Tab::Logs => "j/k:scroll  /:search  n:next  N:prev  Esc:back  ?:help  q:quit",
+            Tab::Logs => "j/k:scroll  h/l:pan  g/G:top/bottom  /:search  n/N:match  Esc:back  ?:help  q:quit",
         };
         Line::from(Span::styled(help_text, styles::TEXT_DIM))
     };
@@ -184,19 +207,15 @@ fn render_input(frame: &mut Frame, app: &App) {
     frame.set_cursor_position((area.x + app.input_buffer.len() as u16 + 1, area.y + 1));
 }
 
-fn render_loading(frame: &mut Frame) {
-    let area = centered_rect(20, 3, frame.area());
+fn render_loading(frame: &mut Frame, app: &App) {
+    let loading_text = app.loading_what.as_deref().unwrap_or("Loading...");
 
-    let loading = Paragraph::new("Loading...")
-        .style(styles::LOADING)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(styles::BORDER_ACTIVE),
-        );
+    // Create a centered popup area for the matrix rain effect
+    let popup_width = 50.min(frame.area().width.saturating_sub(4));
+    let popup_height = 15.min(frame.area().height.saturating_sub(4));
+    let popup_area = centered_rect(popup_width, popup_height, frame.area());
 
-    frame.render_widget(Clear, area);
-    frame.render_widget(loading, area);
+    app.matrix_rain.render(frame, popup_area, Some(loading_text));
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {

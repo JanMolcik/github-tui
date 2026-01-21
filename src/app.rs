@@ -6,9 +6,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::event::{Event, EventHandler};
-use crate::github::types::{Job, PullRequest, WorkflowRun};
+use crate::github::types::{Commit, Job, PullRequest, WorkflowRun};
 use crate::github::Client;
 use crate::ui;
+use crate::ui::MatrixRain;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -43,6 +44,13 @@ pub enum PrFilter {
     ReviewRequested,
 }
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum DiffMode {
+    #[default]
+    Full,
+    ByCommit,
+}
+
 // Messages for async operations
 pub enum AsyncMsg {
     UserLoaded(String),
@@ -52,6 +60,8 @@ pub enum AsyncMsg {
     PrChecksLoaded(Vec<WorkflowRun>),
     JobsLoaded(Vec<Job>),
     LogsLoaded(String),
+    CommitsLoaded(Vec<Commit>),
+    CommitDiffLoaded(String),
     Error(String),
     Message(String),
 }
@@ -78,6 +88,12 @@ pub struct App {
     pub pr_checks: Vec<WorkflowRun>,
     pub pr_checks_state: ListState,
 
+    // Commit review mode
+    pub diff_mode: DiffMode,
+    pub pr_commits: Vec<Commit>,
+    pub pr_commits_state: ListState,
+    pub commit_diff: Option<String>,
+
     // Actions state
     pub runs: Vec<WorkflowRun>,
     pub run_list_state: ListState,
@@ -102,6 +118,9 @@ pub struct App {
     pub show_help: bool,
     pub input_mode: Option<InputMode>,
     pub input_buffer: String,
+
+    // Matrix rain animation
+    pub matrix_rain: MatrixRain,
 
     // GitHub client
     pub client: Option<Client>,
@@ -137,6 +156,7 @@ impl App {
             repo_name,
             pr_list_state: ListState::default(),
             pr_checks_state: ListState::default(),
+            pr_commits_state: ListState::default(),
             run_list_state: ListState::default(),
             job_list_state: ListState::default(),
             async_rx: Some(rx),
@@ -172,9 +192,15 @@ impl App {
                     Event::Tick => {
                         // Process any pending async messages
                         self.process_async_messages();
+                        // Advance matrix rain animation when loading
+                        if self.loading {
+                            self.matrix_rain.tick();
+                        }
                     }
                     Event::Key(key) => self.handle_key(key).await,
-                    Event::Resize(_, _) => {}
+                    Event::Resize(w, h) => {
+                        self.matrix_rain.resize(w, h);
+                    }
                 }
             }
         }
@@ -237,6 +263,18 @@ impl App {
                     self.logs = logs;
                     self.log_scroll = 0;
                     self.log_h_scroll = 0;
+                    self.loading = false;
+                    self.loading_what = None;
+                }
+                AsyncMsg::CommitsLoaded(commits) => {
+                    self.pr_commits = commits;
+                    if !self.pr_commits.is_empty() && self.pr_commits_state.selected().is_none() {
+                        self.pr_commits_state.select(Some(0));
+                    }
+                }
+                AsyncMsg::CommitDiffLoaded(diff) => {
+                    self.commit_diff = Some(diff);
+                    self.diff_scroll = 0;
                     self.loading = false;
                     self.loading_what = None;
                 }
@@ -354,6 +392,33 @@ impl App {
                 match client.get_run_logs(&owner, &repo, run_id, job_id).await {
                     Ok(logs) => { let _ = tx.send(AsyncMsg::LogsLoaded(logs)); }
                     Err(e) => { let _ = tx.send(AsyncMsg::Error(format!("Failed to fetch logs: {}", e))); }
+                }
+            });
+        }
+    }
+
+    fn spawn_fetch_commits(&self, pr_number: u64) {
+        if let (Some(client), Some(tx)) = (self.client.clone(), self.async_tx.clone()) {
+            let owner = self.owner.clone();
+            let repo = self.repo_name.clone();
+            tokio::spawn(async move {
+                match client.list_pr_commits(&owner, &repo, pr_number).await {
+                    Ok(commits) => { let _ = tx.send(AsyncMsg::CommitsLoaded(commits)); }
+                    Err(e) => { let _ = tx.send(AsyncMsg::Error(format!("Failed to fetch commits: {}", e))); }
+                }
+            });
+        }
+    }
+
+    fn spawn_fetch_commit_diff(&self, sha: &str) {
+        if let (Some(client), Some(tx)) = (self.client.clone(), self.async_tx.clone()) {
+            let owner = self.owner.clone();
+            let repo = self.repo_name.clone();
+            let sha = sha.to_string();
+            tokio::spawn(async move {
+                match client.get_commit_diff(&owner, &repo, &sha).await {
+                    Ok(diff) => { let _ = tx.send(AsyncMsg::CommitDiffLoaded(diff)); }
+                    Err(e) => { let _ = tx.send(AsyncMsg::Error(format!("Failed to fetch commit diff: {}", e))); }
                 }
             });
         }
@@ -571,6 +636,24 @@ impl App {
                     // Open PR in browser
                     self.open_pr_in_browser();
                 }
+                KeyCode::Char('p') => {
+                    // Toggle diff mode (Full <-> ByCommit)
+                    self.toggle_diff_mode();
+                }
+                KeyCode::Char('[') => {
+                    // Previous commit (in commit mode)
+                    if self.diff_mode == DiffMode::ByCommit {
+                        self.previous_commit();
+                        self.load_selected_commit_diff();
+                    }
+                }
+                KeyCode::Char(']') => {
+                    // Next commit (in commit mode)
+                    if self.diff_mode == DiffMode::ByCommit {
+                        self.next_commit();
+                        self.load_selected_commit_diff();
+                    }
+                }
                 _ => {}
             },
             View::Diff => match key.code {
@@ -767,6 +850,58 @@ impl App {
         self.job_list_state.select(Some(i));
     }
 
+    fn next_commit(&mut self) {
+        let len = self.pr_commits.len();
+        if len == 0 { return; }
+        let i = match self.pr_commits_state.selected() {
+            Some(i) => (i + 1).min(len - 1),
+            None => 0,
+        };
+        self.pr_commits_state.select(Some(i));
+    }
+
+    fn previous_commit(&mut self) {
+        let len = self.pr_commits.len();
+        if len == 0 { return; }
+        let i = match self.pr_commits_state.selected() {
+            Some(i) => i.saturating_sub(1),
+            None => 0,
+        };
+        self.pr_commits_state.select(Some(i));
+    }
+
+    fn toggle_diff_mode(&mut self) {
+        self.diff_mode = match self.diff_mode {
+            DiffMode::Full => {
+                // Switch to commit mode
+                if !self.pr_commits.is_empty() {
+                    if self.pr_commits_state.selected().is_none() {
+                        self.pr_commits_state.select(Some(0));
+                    }
+                    self.load_selected_commit_diff();
+                    DiffMode::ByCommit
+                } else {
+                    self.message = Some("No commits found for this PR".to_string());
+                    DiffMode::Full
+                }
+            }
+            DiffMode::ByCommit => {
+                self.diff_scroll = 0;
+                DiffMode::Full
+            }
+        };
+    }
+
+    fn load_selected_commit_diff(&mut self) {
+        if let Some(i) = self.pr_commits_state.selected() {
+            if let Some(commit) = self.pr_commits.get(i) {
+                self.loading = true;
+                self.loading_what = Some(format!("Loading commit {}...", commit.short_sha()));
+                self.spawn_fetch_commit_diff(&commit.sha);
+            }
+        }
+    }
+
     fn cycle_filter(&mut self) {
         self.pr_filter = match self.pr_filter {
             PrFilter::All => PrFilter::Mine,
@@ -823,12 +958,17 @@ impl App {
                 self.diff_scroll = 0;
                 self.pr_checks.clear();
                 self.pr_checks_state.select(None);
+                self.pr_commits.clear();
+                self.pr_commits_state.select(None);
+                self.commit_diff = None;
+                self.diff_mode = DiffMode::Full;
 
-                // Spawn async fetch for diff and checks
+                // Spawn async fetch for diff, checks, and commits
                 self.loading = true;
                 self.loading_what = Some("Loading diff...".to_string());
                 self.spawn_fetch_diff(pr.number);
                 self.spawn_fetch_pr_checks(&pr.head.sha);
+                self.spawn_fetch_commits(pr.number);
             }
         }
     }
@@ -1248,6 +1388,10 @@ impl Default for App {
             diff_scroll: 0,
             pr_checks: Vec::new(),
             pr_checks_state: ListState::default(),
+            diff_mode: DiffMode::default(),
+            pr_commits: Vec::new(),
+            pr_commits_state: ListState::default(),
+            commit_diff: None,
             runs: Vec::new(),
             run_list_state: ListState::default(),
             selected_run: None,
@@ -1267,6 +1411,7 @@ impl Default for App {
             show_help: false,
             input_mode: None,
             input_buffer: String::new(),
+            matrix_rain: MatrixRain::default(),
             client: None,
             async_rx: None,
             async_tx: None,

@@ -106,6 +106,14 @@ pub fn render(frame: &mut Frame, _app: &App) {
             Span::styled("  w        ", styles::TAB_ACTIVE),
             Span::styled("Open PR in browser (full edit)", styles::TEXT_NORMAL),
         ]),
+        Line::from(vec![
+            Span::styled("  p        ", styles::TAB_ACTIVE),
+            Span::styled("Toggle commit view (full diff / per-commit)", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
+            Span::styled("  [/]      ", styles::TAB_ACTIVE),
+            Span::styled("Previous/next commit (in commit view)", styles::TEXT_NORMAL),
+        ]),
         Line::from(""),
         Line::from(Span::styled("Actions Tab", styles::TEXT_BOLD)),
         Line::from(""),

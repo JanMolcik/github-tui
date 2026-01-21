@@ -79,6 +79,28 @@ pub struct Step {
     pub number: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Commit {
+    pub sha: String,
+    pub message: String,
+    pub author: String,
+    pub date: String,
+}
+
+impl Commit {
+    pub fn short_sha(&self) -> &str {
+        if self.sha.len() >= 7 {
+            &self.sha[..7]
+        } else {
+            &self.sha
+        }
+    }
+
+    pub fn first_line(&self) -> &str {
+        self.message.lines().next().unwrap_or(&self.message)
+    }
+}
+
 impl PullRequest {
     pub fn status_icon(&self) -> &'static str {
         if self.merged {
