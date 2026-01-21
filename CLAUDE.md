@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## User Context
+
+**The user is a beginner with Rust development.** When explaining things:
+- Provide clear, practical examples
+- Explain Rust-specific concepts when relevant
+- Don't assume familiarity with Rust tooling or idioms
+
 ## Overview
 
 GitHub TUI is a terminal user interface for GitHub workflows built in Rust using Ratatui. It provides keyboard-driven management of pull requests, GitHub Actions workflows, and logs.
@@ -9,11 +16,12 @@ GitHub TUI is a terminal user interface for GitHub workflows built in Rust using
 ## Build Commands
 
 ```bash
-cargo build              # Development build
-cargo build --release    # Optimized release build (LTO enabled)
-cargo run                # Run directly
-cargo run -- --repo owner/repo --pr 123  # Run with arguments
+cargo build --release    # ALWAYS use release build (user runs ./target/release/github-tui)
+cargo run --release      # Run directly
+cargo run --release -- --repo owner/repo --pr 123  # Run with arguments
 ```
+
+**IMPORTANT:** Always build with `--release` flag. The user runs `./target/release/github-tui`, not the debug build.
 
 The release profile uses LTO, single codegen unit, and panic=abort for a smaller binary.
 
@@ -89,3 +97,49 @@ Token resolution order:
 --repo owner/repo    # Specify repository (auto-detects from git remote if omitted)
 --pr NUMBER_OR_URL   # Pre-select a PR (supports both "123" and full GitHub URL)
 ```
+
+## Development Workflow
+
+### Running & Auto-rebuild
+
+```bash
+# Install cargo-watch for auto-rebuild on file changes
+cargo install cargo-watch
+cargo watch -x 'build --release'
+
+# Quick iteration: build + run in one command
+cargo run --release
+```
+
+### Debugging TUI Apps
+
+Since TUI apps take over the terminal, use **file-based logging**. Add the `tracing` crate for structured logging:
+
+```rust
+// In main.rs or app initialization
+use tracing_subscriber::fmt::writer::MakeWriterExt;
+
+let file = std::fs::File::create("/tmp/app.log").unwrap();
+tracing_subscriber::fmt()
+    .with_writer(file)
+    .init();
+
+// Then throughout code:
+tracing::info!("PR loaded: {}", pr.title);
+tracing::debug!("Status message set");
+```
+
+Then in another terminal: `tail -f /tmp/app.log`
+
+### Testing
+
+```bash
+cargo test                    # Run unit tests
+cargo test -- --nocapture     # See println! output in tests
+```
+
+### Recommended Tools
+
+- **rust-analyzer** - IDE support (VS Code, Neovim, etc.)
+- **cargo-watch** - Auto-rebuild on changes: `cargo install cargo-watch`
+- **bacon** - Alternative to cargo-watch with better UI: `cargo install bacon`

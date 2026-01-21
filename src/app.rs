@@ -228,6 +228,13 @@ impl App {
             // Process async messages
             self.process_async_messages();
 
+            // Auto-dismiss expired status messages BEFORE drawing
+            if let Some(ref msg) = self.status_message {
+                if msg.is_expired() {
+                    self.status_message = None;
+                }
+            }
+
             terminal.draw(|f| ui::render(f, self))?;
 
             if let Some(event) = events.next().await {
@@ -238,12 +245,6 @@ impl App {
                         // Advance matrix rain animation when loading
                         if self.loading {
                             self.matrix_rain.tick();
-                        }
-                        // Auto-dismiss expired status messages
-                        if let Some(ref msg) = self.status_message {
-                            if msg.is_expired() {
-                                self.status_message = None;
-                            }
                         }
                     }
                     Event::Key(key) => self.handle_key(key).await,
