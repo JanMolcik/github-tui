@@ -178,6 +178,114 @@ impl Client {
         }
     }
 
+    pub async fn edit_pr_title(&self, owner: &str, repo: &str, number: u64, title: &str) -> Result<()> {
+        let output = tokio::process::Command::new("gh")
+            .args([
+                "pr", "edit",
+                &number.to_string(),
+                "--repo", &format!("{}/{}", owner, repo),
+                "--title", title,
+            ])
+            .output()
+            .await
+            .context("Failed to run gh pr edit")?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "gh pr edit failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    pub async fn add_pr_labels(&self, owner: &str, repo: &str, number: u64, labels: &[&str]) -> Result<()> {
+        if labels.is_empty() {
+            return Ok(());
+        }
+
+        let mut args = vec![
+            "pr".to_string(), "edit".to_string(),
+            number.to_string(),
+            "--repo".to_string(), format!("{}/{}", owner, repo),
+        ];
+
+        for label in labels {
+            args.push("--add-label".to_string());
+            args.push(label.to_string());
+        }
+
+        let output = tokio::process::Command::new("gh")
+            .args(&args)
+            .output()
+            .await
+            .context("Failed to run gh pr edit")?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "gh pr edit failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    pub async fn add_pr_reviewers(&self, owner: &str, repo: &str, number: u64, reviewers: &[&str]) -> Result<()> {
+        if reviewers.is_empty() {
+            return Ok(());
+        }
+
+        let mut args = vec![
+            "pr".to_string(), "edit".to_string(),
+            number.to_string(),
+            "--repo".to_string(), format!("{}/{}", owner, repo),
+        ];
+
+        for reviewer in reviewers {
+            args.push("--add-reviewer".to_string());
+            args.push(reviewer.to_string());
+        }
+
+        let output = tokio::process::Command::new("gh")
+            .args(&args)
+            .output()
+            .await
+            .context("Failed to run gh pr edit")?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "gh pr edit failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    pub async fn open_pr_in_browser(&self, owner: &str, repo: &str, number: u64) -> Result<()> {
+        let output = tokio::process::Command::new("gh")
+            .args([
+                "pr", "view",
+                &number.to_string(),
+                "--repo", &format!("{}/{}", owner, repo),
+                "--web",
+            ])
+            .output()
+            .await
+            .context("Failed to run gh pr view --web")?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "gh pr view --web failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
     pub async fn list_runs(&self, owner: &str, repo: &str) -> Result<Vec<WorkflowRun>> {
         let runs = self
             .octocrab

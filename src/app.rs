@@ -115,6 +115,9 @@ pub struct App {
 pub enum InputMode {
     Search,
     Comment,
+    EditTitle,
+    AddLabel,
+    AddReviewer,
 }
 
 impl App {
@@ -380,6 +383,15 @@ impl App {
                         InputMode::Comment => {
                             self.submit_comment().await;
                         }
+                        InputMode::EditTitle => {
+                            self.submit_edit_title().await;
+                        }
+                        InputMode::AddLabel => {
+                            self.submit_add_label().await;
+                        }
+                        InputMode::AddReviewer => {
+                            self.submit_add_reviewer().await;
+                        }
                     }
                     self.input_mode = None;
                     self.input_buffer.clear();
@@ -532,6 +544,32 @@ impl App {
                 KeyCode::Char('L') => {
                     // View logs for selected PR check
                     self.view_pr_check_jobs();
+                }
+                KeyCode::Char('e') => {
+                    // Edit PR title
+                    if self.selected_pr.is_some() {
+                        self.input_mode = Some(InputMode::EditTitle);
+                        self.input_buffer = self.selected_pr.as_ref().map(|p| p.title.clone()).unwrap_or_default();
+                        self.message = Some("Edit PR title:".to_string());
+                    }
+                }
+                KeyCode::Char('a') => {
+                    // Add reviewer
+                    if self.selected_pr.is_some() {
+                        self.input_mode = Some(InputMode::AddReviewer);
+                        self.message = Some("Add reviewer (username):".to_string());
+                    }
+                }
+                KeyCode::Char('b') => {
+                    // Add label
+                    if self.selected_pr.is_some() {
+                        self.input_mode = Some(InputMode::AddLabel);
+                        self.message = Some("Add label:".to_string());
+                    }
+                }
+                KeyCode::Char('w') => {
+                    // Open PR in browser
+                    self.open_pr_in_browser();
                 }
                 _ => {}
             },
@@ -945,6 +983,143 @@ impl App {
 
     async fn submit_comment(&mut self) {
         self.message = Some("Comment submitted".to_string());
+    }
+
+    async fn submit_edit_title(&mut self) {
+        let pr_number = match &self.selected_pr {
+            Some(pr) => pr.number,
+            None => return,
+        };
+
+        let new_title = self.input_buffer.clone();
+        if new_title.is_empty() {
+            self.error = Some("Title cannot be empty".to_string());
+            return;
+        }
+
+        if let Some(client) = &self.client {
+            self.loading = true;
+            self.loading_what = Some("Updating title...".to_string());
+            match client.edit_pr_title(&self.owner, &self.repo_name, pr_number, &new_title).await {
+                Ok(_) => {
+                    self.message = Some(format!("Updated PR #{} title", pr_number));
+                    // Update local state
+                    if let Some(ref mut pr) = self.selected_pr {
+                        pr.title = new_title.clone();
+                    }
+                    // Also update in lists
+                    for p in &mut self.all_prs {
+                        if p.number == pr_number {
+                            p.title = new_title.clone();
+                        }
+                    }
+                    self.apply_pr_filter();
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to update title: {}", e));
+                }
+            }
+            self.loading = false;
+            self.loading_what = None;
+        }
+    }
+
+    async fn submit_add_label(&mut self) {
+        let pr_number = match &self.selected_pr {
+            Some(pr) => pr.number,
+            None => return,
+        };
+
+        let label = self.input_buffer.trim().to_string();
+        if label.is_empty() {
+            self.error = Some("Label cannot be empty".to_string());
+            return;
+        }
+
+        if let Some(client) = &self.client {
+            self.loading = true;
+            self.loading_what = Some("Adding label...".to_string());
+            match client.add_pr_labels(&self.owner, &self.repo_name, pr_number, &[label.as_str()]).await {
+                Ok(_) => {
+                    self.message = Some(format!("Added label '{}' to PR #{}", label, pr_number));
+                    // Refresh PRs to get updated labels
+                    self.spawn_fetch_prs();
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to add label: {}", e));
+                }
+            }
+            self.loading = false;
+            self.loading_what = None;
+        }
+    }
+
+    async fn submit_add_reviewer(&mut self) {
+        let pr_number = match &self.selected_pr {
+            Some(pr) => pr.number,
+            None => return,
+        };
+
+        let reviewer = self.input_buffer.trim().to_string();
+        if reviewer.is_empty() {
+            self.error = Some("Reviewer username cannot be empty".to_string());
+            return;
+        }
+
+        if let Some(client) = &self.client {
+            self.loading = true;
+            self.loading_what = Some("Adding reviewer...".to_string());
+            match client.add_pr_reviewers(&self.owner, &self.repo_name, pr_number, &[reviewer.as_str()]).await {
+                Ok(_) => {
+                    self.message = Some(format!("Added '{}' as reviewer to PR #{}", reviewer, pr_number));
+                    // Refresh PRs to get updated reviewers
+                    self.spawn_fetch_prs();
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to add reviewer: {}", e));
+                }
+            }
+            self.loading = false;
+            self.loading_what = None;
+        }
+    }
+
+    fn open_pr_in_browser(&mut self) {
+        if let Some(pr) = &self.selected_pr {
+            let pr_number = pr.number;
+            let owner = self.owner.clone();
+            let repo = self.repo_name.clone();
+            let tx = self.async_tx.clone();
+            tokio::spawn(async move {
+                let output = tokio::process::Command::new("gh")
+                    .args([
+                        "pr", "view",
+                        &pr_number.to_string(),
+                        "--repo", &format!("{}/{}", owner, repo),
+                        "--web",
+                    ])
+                    .output()
+                    .await;
+
+                if let Some(tx) = tx {
+                    match output {
+                        Ok(o) if o.status.success() => {
+                            let _ = tx.send(AsyncMsg::Message(format!("Opened PR #{} in browser", pr_number)));
+                        }
+                        Ok(o) => {
+                            let _ = tx.send(AsyncMsg::Error(format!(
+                                "Failed to open PR: {}",
+                                String::from_utf8_lossy(&o.stderr)
+                            )));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(AsyncMsg::Error(format!("Failed to open PR: {}", e)));
+                        }
+                    }
+                }
+            });
+            self.message = Some("Opening PR in browser...".to_string());
+        }
     }
 
     async fn rerun_workflow(&mut self) {

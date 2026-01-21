@@ -88,7 +88,23 @@ pub fn render(frame: &mut Frame, _app: &App) {
         ]),
         Line::from(vec![
             Span::styled("  L        ", styles::TAB_ACTIVE),
-            Span::styled("View logs for CI check (in CI panel)", styles::TEXT_NORMAL),
+            Span::styled("View jobs for CI check (in CI panel)", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
+            Span::styled("  e        ", styles::TAB_ACTIVE),
+            Span::styled("Edit PR title", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
+            Span::styled("  a        ", styles::TAB_ACTIVE),
+            Span::styled("Add reviewer", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
+            Span::styled("  b        ", styles::TAB_ACTIVE),
+            Span::styled("Add label", styles::TEXT_NORMAL),
+        ]),
+        Line::from(vec![
+            Span::styled("  w        ", styles::TAB_ACTIVE),
+            Span::styled("Open PR in browser (full edit)", styles::TEXT_NORMAL),
         ]),
         Line::from(""),
         Line::from(Span::styled("Actions Tab", styles::TEXT_BOLD)),

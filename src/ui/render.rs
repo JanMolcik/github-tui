@@ -162,6 +162,9 @@ fn render_input(frame: &mut Frame, app: &App) {
     let title = match app.input_mode {
         Some(InputMode::Search) => " Search ",
         Some(InputMode::Comment) => " Comment ",
+        Some(InputMode::EditTitle) => " Edit PR Title ",
+        Some(InputMode::AddLabel) => " Add Label ",
+        Some(InputMode::AddReviewer) => " Add Reviewer ",
         None => "",
     };
 
