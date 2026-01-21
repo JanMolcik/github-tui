@@ -113,8 +113,7 @@ pub struct App {
     pub loading: bool,
     pub loading_what: Option<String>,
     pub error: Option<String>,
-    pub message: Option<String>,
-    pub message_time: Option<Instant>,
+    pub status_message: Option<StatusMessage>,
     pub should_quit: bool,
     pub show_help: bool,
     pub input_mode: Option<InputMode>,
@@ -132,6 +131,46 @@ pub struct App {
     // Async message channel
     async_rx: Option<mpsc::UnboundedReceiver<AsyncMsg>>,
     async_tx: Option<mpsc::UnboundedSender<AsyncMsg>>,
+}
+
+/// Status bar message with explicit lifetime semantics
+#[derive(Clone)]
+pub enum StatusMessage {
+    /// Auto-dismissing notification - expires after the specified instant
+    Notification { text: String, expires_at: Instant },
+    /// Persistent prompt - stays until manually cleared (e.g., input mode prompts)
+    Prompt(String),
+}
+
+impl StatusMessage {
+    /// Create a notification that auto-dismisses after the given duration
+    pub fn notification(text: impl Into<String>, duration: Duration) -> Self {
+        StatusMessage::Notification {
+            text: text.into(),
+            expires_at: Instant::now() + duration,
+        }
+    }
+
+    /// Create a persistent prompt
+    pub fn prompt(text: impl Into<String>) -> Self {
+        StatusMessage::Prompt(text.into())
+    }
+
+    /// Get the message text
+    pub fn text(&self) -> &str {
+        match self {
+            StatusMessage::Notification { text, .. } => text,
+            StatusMessage::Prompt(text) => text,
+        }
+    }
+
+    /// Check if this message has expired
+    pub fn is_expired(&self) -> bool {
+        match self {
+            StatusMessage::Notification { expires_at, .. } => Instant::now() > *expires_at,
+            StatusMessage::Prompt(_) => false, // Prompts never expire
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -200,13 +239,10 @@ impl App {
                         if self.loading {
                             self.matrix_rain.tick();
                         }
-                        // Auto-dismiss messages after 3 seconds (but not when in input mode)
-                        if self.input_mode.is_none() {
-                            if let Some(time) = self.message_time {
-                                if time.elapsed() > Duration::from_secs(3) {
-                                    self.message = None;
-                                    self.message_time = None;
-                                }
+                        // Auto-dismiss expired status messages
+                        if let Some(ref msg) = self.status_message {
+                            if msg.is_expired() {
+                                self.status_message = None;
                             }
                         }
                     }
@@ -461,8 +497,7 @@ impl App {
                 KeyCode::Esc => {
                     self.input_mode = None;
                     self.input_buffer.clear();
-                    self.message = None;
-                    self.message_time = None;
+                    self.status_message = None;
                 }
                 KeyCode::Enter => {
                     match mode {
@@ -485,8 +520,7 @@ impl App {
                     }
                     self.input_mode = None;
                     self.input_buffer.clear();
-                    self.message = None;
-                    self.message_time = None;
+                    self.status_message = None;
                 }
                 KeyCode::Backspace => {
                     self.input_buffer.pop();
@@ -633,13 +667,11 @@ impl App {
                 }
                 KeyCode::Char('x') => {
                     self.input_mode = Some(InputMode::Comment);
-                    self.message = Some("Enter comment for request changes:".to_string());
-                    self.message_time = None;
+                    self.status_message = Some(StatusMessage::prompt("Enter comment for request changes:"));
                 }
                 KeyCode::Char('c') => {
                     self.input_mode = Some(InputMode::Comment);
-                    self.message = Some("Enter comment:".to_string());
-                    self.message_time = None;
+                    self.status_message = Some(StatusMessage::prompt("Enter comment:"));
                 }
                 KeyCode::Char('m') => {
                     self.merge_pr().await;
@@ -663,24 +695,21 @@ impl App {
                     if self.selected_pr.is_some() {
                         self.input_mode = Some(InputMode::EditTitle);
                         self.input_buffer = self.selected_pr.as_ref().map(|p| p.title.clone()).unwrap_or_default();
-                        self.message = Some("Edit PR title:".to_string());
-                        self.message_time = None;
+                        self.status_message = Some(StatusMessage::prompt("Edit PR title:"));
                     }
                 }
                 KeyCode::Char('a') => {
                     // Add reviewer
                     if self.selected_pr.is_some() {
                         self.input_mode = Some(InputMode::AddReviewer);
-                        self.message = Some("Add reviewer (username):".to_string());
-                        self.message_time = None;
+                        self.status_message = Some(StatusMessage::prompt("Add reviewer (username):"));
                     }
                 }
                 KeyCode::Char('b') => {
                     // Add label
                     if self.selected_pr.is_some() {
                         self.input_mode = Some(InputMode::AddLabel);
-                        self.message = Some("Add label:".to_string());
-                        self.message_time = None;
+                        self.status_message = Some(StatusMessage::prompt("Add label:"));
                     }
                 }
                 KeyCode::Char('w') => {
@@ -815,8 +844,7 @@ impl App {
             }
             KeyCode::Char('/') => {
                 self.input_mode = Some(InputMode::Search);
-                self.message = Some("Search:".to_string());
-                self.message_time = None;
+                self.status_message = Some(StatusMessage::prompt("Search:"));
             }
             KeyCode::Char('n') => {
                 self.next_log_match();
@@ -1477,8 +1505,7 @@ impl App {
 
     fn refresh(&mut self) {
         self.error = None;
-        self.message = None;
-        self.message_time = None;
+        self.status_message = None;
         self.loading = true;
 
         match self.tab {
@@ -1538,8 +1565,7 @@ impl App {
 
     /// Set a notification message that auto-dismisses after 3 seconds
     fn set_message(&mut self, msg: impl Into<String>) {
-        self.message = Some(msg.into());
-        self.message_time = Some(Instant::now());
+        self.status_message = Some(StatusMessage::notification(msg, Duration::from_secs(3)));
     }
 }
 
@@ -1580,8 +1606,7 @@ impl Default for App {
             loading: false,
             loading_what: None,
             error: None,
-            message: None,
-            message_time: None,
+            status_message: None,
             should_quit: false,
             show_help: false,
             input_mode: None,

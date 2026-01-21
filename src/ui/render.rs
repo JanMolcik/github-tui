@@ -131,8 +131,8 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("Error: ", styles::ERROR),
             Span::styled(err.as_str(), styles::ERROR),
         ])
-    } else if let Some(ref msg) = app.message {
-        Line::from(Span::styled(msg.as_str(), styles::MESSAGE))
+    } else if let Some(ref msg) = app.status_message {
+        Line::from(Span::styled(msg.text(), styles::MESSAGE))
     } else {
         // Context-sensitive help based on tab, view, and focus
         let help_text = match app.tab {
