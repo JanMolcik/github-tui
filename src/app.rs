@@ -678,6 +678,10 @@ impl App {
                     // Copy checkout command to clipboard
                     self.copy_checkout_command_to_clipboard();
                 }
+                KeyCode::Char('u') => {
+                    // Copy PR URL to clipboard
+                    self.copy_pr_url_to_clipboard();
+                }
                 KeyCode::Char('p') => {
                     // Toggle diff mode (Full <-> ByCommit)
                     self.toggle_diff_mode();
@@ -1294,6 +1298,17 @@ impl App {
             let cmd = format!("git checkout {}", pr.head.ref_name);
             if Self::copy_to_clipboard(&cmd) {
                 self.message = Some(format!("Copied: {}", cmd));
+            } else {
+                self.error = Some("Failed to copy to clipboard".to_string());
+            }
+        }
+    }
+
+    fn copy_pr_url_to_clipboard(&mut self) {
+        if let Some(pr) = &self.selected_pr {
+            let url = format!("https://github.com/{}/pull/{}", self.repo, pr.number);
+            if Self::copy_to_clipboard(&url) {
+                self.message = Some(format!("Copied: {}", url));
             } else {
                 self.error = Some("Failed to copy to clipboard".to_string());
             }
