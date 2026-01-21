@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::prelude::*;
 use ratatui::widgets::ListState;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::event::{Event, EventHandler};
@@ -114,6 +114,7 @@ pub struct App {
     pub loading_what: Option<String>,
     pub error: Option<String>,
     pub message: Option<String>,
+    pub message_time: Option<Instant>,
     pub should_quit: bool,
     pub show_help: bool,
     pub input_mode: Option<InputMode>,
@@ -198,6 +199,15 @@ impl App {
                         // Advance matrix rain animation when loading
                         if self.loading {
                             self.matrix_rain.tick();
+                        }
+                        // Auto-dismiss messages after 3 seconds (but not when in input mode)
+                        if self.input_mode.is_none() {
+                            if let Some(time) = self.message_time {
+                                if time.elapsed() > Duration::from_secs(3) {
+                                    self.message = None;
+                                    self.message_time = None;
+                                }
+                            }
                         }
                     }
                     Event::Key(key) => self.handle_key(key).await,
@@ -927,7 +937,7 @@ impl App {
                     self.load_selected_commit_diff();
                     DiffMode::ByCommit
                 } else {
-                    self.message = Some("No commits found for this PR".to_string());
+                    self.set_message("No commits found for this PR");
                     DiffMode::Full
                 }
             }
@@ -1089,7 +1099,7 @@ impl App {
                 self.loading_what = Some("Approving PR...".to_string());
                 match client.approve_pr(&self.owner, &self.repo_name, pr.number).await {
                     Ok(_) => {
-                        self.message = Some(format!("Approved PR #{}", pr.number));
+                        self.set_message(format!("Approved PR #{}", pr.number));
                     }
                     Err(e) => {
                         self.error = Some(format!("Failed to approve: {}", e));
@@ -1108,7 +1118,7 @@ impl App {
                 self.loading_what = Some("Merging PR...".to_string());
                 match client.merge_pr(&self.owner, &self.repo_name, pr.number).await {
                     Ok(_) => {
-                        self.message = Some(format!("Merged PR #{}", pr.number));
+                        self.set_message(format!("Merged PR #{}", pr.number));
                         self.spawn_fetch_prs();
                     }
                     Err(e) => {
@@ -1176,11 +1186,11 @@ impl App {
                 }
             }
         });
-        self.message = Some("Opening PR creation in browser...".to_string());
+        self.set_message("Opening PR creation in browser...");
     }
 
     async fn submit_comment(&mut self) {
-        self.message = Some("Comment submitted".to_string());
+        self.set_message("Comment submitted");
     }
 
     async fn submit_edit_title(&mut self) {
@@ -1200,7 +1210,7 @@ impl App {
             self.loading_what = Some("Updating title...".to_string());
             match client.edit_pr_title(&self.owner, &self.repo_name, pr_number, &new_title).await {
                 Ok(_) => {
-                    self.message = Some(format!("Updated PR #{} title", pr_number));
+                    self.set_message(format!("Updated PR #{} title", pr_number));
                     // Update local state
                     if let Some(ref mut pr) = self.selected_pr {
                         pr.title = new_title.clone();
@@ -1239,7 +1249,7 @@ impl App {
             self.loading_what = Some("Adding label...".to_string());
             match client.add_pr_labels(&self.owner, &self.repo_name, pr_number, &[label.as_str()]).await {
                 Ok(_) => {
-                    self.message = Some(format!("Added label '{}' to PR #{}", label, pr_number));
+                    self.set_message(format!("Added label '{}' to PR #{}", label, pr_number));
                     // Refresh PRs to get updated labels
                     self.spawn_fetch_prs();
                 }
@@ -1269,7 +1279,7 @@ impl App {
             self.loading_what = Some("Adding reviewer...".to_string());
             match client.add_pr_reviewers(&self.owner, &self.repo_name, pr_number, &[reviewer.as_str()]).await {
                 Ok(_) => {
-                    self.message = Some(format!("Added '{}' as reviewer to PR #{}", reviewer, pr_number));
+                    self.set_message(format!("Added '{}' as reviewer to PR #{}", reviewer, pr_number));
                     // Refresh PRs to get updated reviewers
                     self.spawn_fetch_prs();
                 }
@@ -1286,7 +1296,7 @@ impl App {
         if let Some(pr) = &self.selected_pr {
             let branch = &pr.head.ref_name;
             if Self::copy_to_clipboard(branch) {
-                self.message = Some(format!("Copied branch: {}", branch));
+                self.set_message(format!("Copied branch: {}", branch));
             } else {
                 self.error = Some("Failed to copy to clipboard".to_string());
             }
@@ -1297,7 +1307,7 @@ impl App {
         if let Some(pr) = &self.selected_pr {
             let cmd = format!("git checkout {}", pr.head.ref_name);
             if Self::copy_to_clipboard(&cmd) {
-                self.message = Some(format!("Copied: {}", cmd));
+                self.set_message(format!("Copied: {}", cmd));
             } else {
                 self.error = Some("Failed to copy to clipboard".to_string());
             }
@@ -1308,7 +1318,7 @@ impl App {
         if let Some(pr) = &self.selected_pr {
             let url = format!("https://github.com/{}/pull/{}", self.repo, pr.number);
             if Self::copy_to_clipboard(&url) {
-                self.message = Some(format!("Copied: {}", url));
+                self.set_message(format!("Copied: {}", url));
             } else {
                 self.error = Some("Failed to copy to clipboard".to_string());
             }
@@ -1407,7 +1417,7 @@ impl App {
                     }
                 }
             });
-            self.message = Some("Opening PR in browser...".to_string());
+            self.set_message("Opening PR in browser...");
         }
     }
 
@@ -1419,7 +1429,7 @@ impl App {
                 self.loading_what = Some("Triggering rerun...".to_string());
                 match client.rerun_workflow(&self.owner, &self.repo_name, run.id).await {
                     Ok(_) => {
-                        self.message = Some(format!("Rerun triggered for {}", run.name));
+                        self.set_message(format!("Rerun triggered for {}", run.name));
                         self.spawn_fetch_runs();
                     }
                     Err(e) => {
@@ -1440,7 +1450,7 @@ impl App {
                     self.loading_what = Some("Triggering rerun...".to_string());
                     match client.rerun_workflow(&self.owner, &self.repo_name, check.id).await {
                         Ok(_) => {
-                            self.message = Some(format!("Rerun triggered for {}", check.name));
+                            self.set_message(format!("Rerun triggered for {}", check.name));
                             // Refresh PR checks
                             if let Some(pr) = &self.selected_pr {
                                 self.spawn_fetch_pr_checks(&pr.head.sha);
@@ -1516,6 +1526,12 @@ impl App {
             self.log_scroll = self.log_matches[self.log_match_index] as u16;
         }
     }
+
+    /// Set a notification message that auto-dismisses after 3 seconds
+    fn set_message(&mut self, msg: impl Into<String>) {
+        self.message = Some(msg.into());
+        self.message_time = Some(Instant::now());
+    }
 }
 
 impl Default for App {
@@ -1556,6 +1572,7 @@ impl Default for App {
             loading_what: None,
             error: None,
             message: None,
+            message_time: None,
             should_quit: false,
             show_help: false,
             input_mode: None,
