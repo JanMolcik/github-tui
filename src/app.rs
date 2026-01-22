@@ -1190,17 +1190,32 @@ impl App {
 
     fn checkout_pr(&mut self) {
         if let Some(pr) = &self.selected_pr {
+            let branch = pr.head.ref_name.clone();
             let pr_number = pr.number;
             let tx = self.async_tx.clone();
+
             tokio::spawn(async move {
-                let output = std::process::Command::new("gh")
-                    .args(["pr", "checkout", &pr_number.to_string()])
+                // First fetch the branch from origin
+                let fetch = std::process::Command::new("git")
+                    .args(["fetch", "origin", &branch])
+                    .output();
+
+                if let Err(e) = fetch {
+                    if let Some(tx) = &tx {
+                        let _ = tx.send(AsyncMsg::Error(format!("Fetch failed: {}", e)));
+                    }
+                    return;
+                }
+
+                // Then checkout the branch (create tracking branch if needed)
+                let checkout = std::process::Command::new("git")
+                    .args(["checkout", "-B", &branch, &format!("origin/{}", branch)])
                     .output();
 
                 if let Some(tx) = tx {
-                    match output {
+                    match checkout {
                         Ok(o) if o.status.success() => {
-                            let _ = tx.send(AsyncMsg::Message(format!("Checked out PR #{}", pr_number)));
+                            let _ = tx.send(AsyncMsg::Message(format!("Checked out PR #{} ({})", pr_number, branch)));
                         }
                         Ok(o) => {
                             let _ = tx.send(AsyncMsg::Error(format!(
@@ -1218,32 +1233,26 @@ impl App {
     }
 
     fn create_pr(&mut self) {
-        let tx = self.async_tx.clone();
-        let repo = format!("{}/{}", self.owner, self.repo_name);
-        tokio::spawn(async move {
-            // Open gh pr create in interactive mode
-            let output = std::process::Command::new("gh")
-                .args(["pr", "create", "--web", "--repo", &repo])
-                .output();
+        // Get current branch name to pre-fill the PR creation URL
+        let branch = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
 
-            if let Some(tx) = tx {
-                match output {
-                    Ok(o) if o.status.success() => {
-                        let _ = tx.send(AsyncMsg::Message("Opened PR creation in browser".to_string()));
-                    }
-                    Ok(o) => {
-                        let _ = tx.send(AsyncMsg::Error(format!(
-                            "Failed to create PR: {}",
-                            String::from_utf8_lossy(&o.stderr)
-                        )));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(AsyncMsg::Error(format!("Failed to create PR: {}", e)));
-                    }
-                }
-            }
-        });
-        self.set_message("Opening PR creation in browser...");
+        let url = if branch.is_empty() {
+            format!("https://github.com/{}/{}/compare", self.owner, self.repo_name)
+        } else {
+            format!("https://github.com/{}/{}/compare/{}?expand=1", self.owner, self.repo_name, branch)
+        };
+
+        if Self::open_url(&url) {
+            self.set_message("Opened PR creation in browser");
+        } else {
+            self.error = Some("Failed to open browser".to_string());
+        }
     }
 
     async fn submit_comment(&mut self) {
@@ -1442,39 +1451,46 @@ impl App {
 
     fn open_pr_in_browser(&mut self) {
         if let Some(pr) = &self.selected_pr {
-            let pr_number = pr.number;
-            let owner = self.owner.clone();
-            let repo = self.repo_name.clone();
-            let tx = self.async_tx.clone();
-            tokio::spawn(async move {
-                let output = tokio::process::Command::new("gh")
-                    .args([
-                        "pr", "view",
-                        &pr_number.to_string(),
-                        "--repo", &format!("{}/{}", owner, repo),
-                        "--web",
-                    ])
-                    .output()
-                    .await;
+            let url = format!("https://github.com/{}/{}/pull/{}", self.owner, self.repo_name, pr.number);
+            if Self::open_url(&url) {
+                self.set_message(format!("Opened PR #{} in browser", pr.number));
+            } else {
+                self.error = Some("Failed to open browser".to_string());
+            }
+        }
+    }
 
-                if let Some(tx) = tx {
-                    match output {
-                        Ok(o) if o.status.success() => {
-                            let _ = tx.send(AsyncMsg::Message(format!("Opened PR #{} in browser", pr_number)));
-                        }
-                        Ok(o) => {
-                            let _ = tx.send(AsyncMsg::Error(format!(
-                                "Failed to open PR: {}",
-                                String::from_utf8_lossy(&o.stderr)
-                            )));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(AsyncMsg::Error(format!("Failed to open PR: {}", e)));
-                        }
-                    }
-                }
-            });
-            self.set_message("Opening PR in browser...");
+    fn open_url(url: &str) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(url)
+                .spawn()
+                .map(|_| true)
+                .unwrap_or(false)
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(url)
+                .spawn()
+                .map(|_| true)
+                .unwrap_or(false)
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", url])
+                .spawn()
+                .map(|_| true)
+                .unwrap_or(false)
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            false
         }
     }
 

@@ -28,10 +28,11 @@ pub struct Client {
 
 impl Client {
     pub async fn new() -> Result<Self> {
-        // Try to get token from environment or gh CLI
+        // Try to get token from: env vars -> .env.local -> gh config
         let token = std::env::var("GITHUB_TOKEN")
             .or_else(|_| std::env::var("GH_TOKEN"))
-            .or_else(|_| Self::get_gh_token())
+            .or_else(|_| Self::get_token_from_env_file())
+            .or_else(|_| Self::get_gh_config_token())
             .context("No GitHub token found. Set GITHUB_TOKEN env var or login with `gh auth login`")?;
 
         let octocrab = Octocrab::builder()
@@ -49,25 +50,60 @@ impl Client {
         })
     }
 
-    fn get_gh_token() -> Result<String, std::env::VarError> {
-        let output = std::process::Command::new("gh")
-            .args(["auth", "token"])
-            .output()
+    fn get_token_from_env_file() -> Result<String, std::env::VarError> {
+        // Try .env.local first, then .env
+        let paths = [".env.local", ".env"];
+
+        for path in paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                for line in content.lines() {
+                    let line = line.trim();
+                    // Skip comments and empty lines
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    // Look for GITHUB_TOKEN= or GH_TOKEN=
+                    for prefix in ["GITHUB_TOKEN=", "GH_TOKEN="] {
+                        if let Some(token) = line.strip_prefix(prefix) {
+                            let token = token.trim().trim_matches('"').trim_matches('\'').to_string();
+                            if !token.is_empty() {
+                                return Ok(token);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(std::env::VarError::NotPresent)
+    }
+
+    fn get_gh_config_token() -> Result<String, std::env::VarError> {
+        // Read token directly from gh CLI config file (~/.config/gh/hosts.yml)
+        let config_path = dirs::home_dir()
+            .ok_or(std::env::VarError::NotPresent)?
+            .join(".config/gh/hosts.yml");
+
+        let content = std::fs::read_to_string(config_path)
             .map_err(|_| std::env::VarError::NotPresent)?;
 
-        if output.status.success() {
-            let token = String::from_utf8(output.stdout)
-                .map_err(|_| std::env::VarError::NotPresent)?
-                .trim()
-                .to_string();
-            if token.is_empty() {
-                Err(std::env::VarError::NotPresent)
-            } else {
-                Ok(token)
+        // Parse YAML manually - look for oauth_token under github.com
+        // Format:
+        // github.com:
+        //     oauth_token: gho_xxxx
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("oauth_token:") {
+                if let Some(token) = trimmed.strip_prefix("oauth_token:") {
+                    let token = token.trim().to_string();
+                    if !token.is_empty() {
+                        return Ok(token);
+                    }
+                }
             }
-        } else {
-            Err(std::env::VarError::NotPresent)
         }
+
+        Err(std::env::VarError::NotPresent)
     }
 
     /// Get the current authenticated user
