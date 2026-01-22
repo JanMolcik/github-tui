@@ -87,6 +87,26 @@ pub struct Commit {
     pub date: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Review {
+    pub user: User,
+    pub state: String,  // APPROVED, CHANGES_REQUESTED, COMMENTED, PENDING, DISMISSED
+    pub submitted_at: Option<String>,
+}
+
+impl Review {
+    pub fn status_icon(&self) -> &'static str {
+        match self.state.as_str() {
+            "APPROVED" => "✓",
+            "CHANGES_REQUESTED" => "✗",
+            "COMMENTED" => "💬",
+            "PENDING" => "◯",
+            "DISMISSED" => "⊘",
+            _ => "○",
+        }
+    }
+}
+
 impl Commit {
     pub fn short_sha(&self) -> &str {
         if self.sha.len() >= 7 {

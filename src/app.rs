@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use crate::event::{Event, EventHandler};
-use crate::github::types::{Commit, Job, PullRequest, WorkflowRun};
+use crate::github::types::{Commit, Job, PullRequest, Review, WorkflowRun};
 use crate::github::Client;
 use crate::ui;
 use crate::ui::MatrixRain;
@@ -58,6 +58,7 @@ pub enum AsyncMsg {
     RunsLoaded(Vec<WorkflowRun>),
     DiffLoaded(String),
     PrChecksLoaded(Vec<WorkflowRun>),
+    ReviewsLoaded(Vec<Review>),
     JobsLoaded(Vec<Job>),
     LogsLoaded(String),
     CommitsLoaded(Vec<Commit>),
@@ -88,6 +89,9 @@ pub struct App {
     // PR checks (workflow runs for selected PR)
     pub pr_checks: Vec<WorkflowRun>,
     pub pr_checks_state: ListState,
+
+    // PR reviews (approval status)
+    pub pr_reviews: Vec<Review>,
 
     // Commit review mode
     pub diff_mode: DiffMode,
@@ -308,6 +312,9 @@ impl App {
                         self.pr_checks_state.select(Some(0));
                     }
                 }
+                AsyncMsg::ReviewsLoaded(reviews) => {
+                    self.pr_reviews = reviews;
+                }
                 AsyncMsg::JobsLoaded(jobs) => {
                     self.jobs = jobs;
                     if !self.jobs.is_empty() && self.job_list_state.selected().is_none() {
@@ -420,6 +427,19 @@ impl App {
                 match client.list_runs_for_commit(&owner, &repo, &sha).await {
                     Ok(runs) => { let _ = tx.send(AsyncMsg::PrChecksLoaded(runs)); }
                     Err(e) => { let _ = tx.send(AsyncMsg::Error(format!("Failed to fetch PR checks: {}", e))); }
+                }
+            });
+        }
+    }
+
+    fn spawn_fetch_reviews(&self, pr_number: u64) {
+        if let (Some(client), Some(tx)) = (self.client.clone(), self.async_tx.clone()) {
+            let owner = self.owner.clone();
+            let repo = self.repo_name.clone();
+            tokio::spawn(async move {
+                match client.list_pr_reviews(&owner, &repo, pr_number).await {
+                    Ok(reviews) => { let _ = tx.send(AsyncMsg::ReviewsLoaded(reviews)); }
+                    Err(e) => { let _ = tx.send(AsyncMsg::Error(format!("Failed to fetch reviews: {}", e))); }
                 }
             });
         }
@@ -1061,16 +1081,18 @@ impl App {
                 self.diff_scroll = 0;
                 self.pr_checks.clear();
                 self.pr_checks_state.select(None);
+                self.pr_reviews.clear();
                 self.pr_commits.clear();
                 self.pr_commits_state.select(None);
                 self.commit_diff = None;
                 self.diff_mode = DiffMode::Full;
 
-                // Spawn async fetch for diff, checks, and commits
+                // Spawn async fetch for diff, checks, reviews, and commits
                 self.loading = true;
                 self.loading_what = Some("Loading diff...".to_string());
                 self.spawn_fetch_diff(pr.number);
                 self.spawn_fetch_pr_checks(&pr.head.sha);
+                self.spawn_fetch_reviews(pr.number);
                 self.spawn_fetch_commits(pr.number);
             }
         }

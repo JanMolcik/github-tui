@@ -51,15 +51,8 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
             pr.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>().join(", ")
         };
 
-        let reviewers_text = if pr.requested_reviewers.is_empty() {
-            "None".to_string()
-        } else {
-            pr.requested_reviewers
-                .iter()
-                .map(|r| r.login.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
+        // Build reviewers line with actual review status
+        let reviewers_spans: Vec<Span> = build_reviewers_spans(app, pr);
 
         let meta_lines = vec![
             Line::from(vec![
@@ -94,10 +87,11 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(" | CI: ", styles::TEXT_DIM),
                 Span::styled(pr.ci_icon(), ci_style),
             ]),
-            Line::from(vec![
-                Span::styled("Reviewers: ", styles::TEXT_DIM),
-                Span::styled(reviewers_text, styles::TEXT_NORMAL),
-            ]),
+            Line::from({
+                let mut spans = vec![Span::styled("Reviews: ", styles::TEXT_DIM)];
+                spans.extend(reviewers_spans.clone());
+                spans
+            }),
             Line::from(vec![
                 Span::styled("Labels: ", styles::TEXT_DIM),
                 Span::styled(labels_text, styles::TEXT_NORMAL),
@@ -398,4 +392,72 @@ fn extract_filename_from_diff_line(line: &str) -> Option<String> {
         return Some(b_path.to_string());
     }
     None
+}
+
+use crate::github::types::PullRequest;
+
+fn build_reviewers_spans(app: &App, pr: &PullRequest) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Get the latest review per user (GitHub allows multiple reviews)
+    // Use BTreeMap for stable iteration order
+    use std::collections::BTreeMap;
+    let mut latest_reviews: BTreeMap<String, (String, &'static str)> = BTreeMap::new();
+
+    for review in &app.pr_reviews {
+        // PENDING reviews should be ignored unless they're the only review
+        if review.state == "PENDING" {
+            continue;
+        }
+        // Keep the latest non-pending review for each user
+        latest_reviews.insert(
+            review.user.login.clone(),
+            (review.state.clone(), review.status_icon()),
+        );
+    }
+
+    // Show submitted reviews with status (sorted alphabetically by username)
+    let mut first = true;
+    for (login, (state, icon)) in &latest_reviews {
+        if !first {
+            spans.push(Span::styled(", ", styles::TEXT_DIM));
+        }
+        first = false;
+
+        let style = match state.as_str() {
+            "APPROVED" => styles::SUCCESS,
+            "CHANGES_REQUESTED" => styles::FAILURE,
+            "COMMENTED" => styles::NEUTRAL,
+            "DISMISSED" => styles::TEXT_DIM,
+            _ => styles::TEXT_NORMAL,
+        };
+
+        spans.push(Span::styled(format!("{} ", icon), style));
+        spans.push(Span::styled(login.clone(), styles::TEXT_NORMAL));
+    }
+
+    // Show pending reviewers (requested but haven't reviewed yet)
+    let reviewed_users: std::collections::HashSet<&str> = latest_reviews.keys().map(|s| s.as_str()).collect();
+    let mut pending_reviewers: Vec<&str> = pr
+        .requested_reviewers
+        .iter()
+        .filter(|r| !reviewed_users.contains(r.login.as_str()))
+        .map(|r| r.login.as_str())
+        .collect();
+    pending_reviewers.sort(); // Sort for stable order
+
+    for reviewer in pending_reviewers {
+        if !first {
+            spans.push(Span::styled(", ", styles::TEXT_DIM));
+        }
+        first = false;
+        spans.push(Span::styled("◯ ", styles::PENDING));
+        spans.push(Span::styled(reviewer.to_string(), styles::TEXT_NORMAL));
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled("None", styles::TEXT_DIM));
+    }
+
+    spans
 }

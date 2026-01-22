@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::types::{Commit, Job, PullRequest, WorkflowRun};
+use super::types::{Commit, Job, PullRequest, Review, WorkflowRun};
 
 const API_BASE: &str = "https://api.github.com";
 
@@ -580,6 +580,33 @@ impl Client {
 
         Ok(diff)
     }
+
+    pub async fn list_pr_reviews(&self, owner: &str, repo: &str, number: u64) -> Result<Vec<Review>> {
+        let url = format!(
+            "{}/repos/{}/{}/pulls/{}/reviews",
+            API_BASE, owner, repo, number
+        );
+
+        let reviews: Vec<ReviewResponse> = self.http
+            .get(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", self.token))
+            .header(USER_AGENT, "github-tui")
+            .send()
+            .await
+            .context("Failed to fetch PR reviews")?
+            .json()
+            .await
+            .context("Failed to parse reviews response")?;
+
+        Ok(reviews.into_iter().map(|r| Review {
+            user: super::types::User {
+                login: r.user.login,
+                avatar_url: r.user.avatar_url.unwrap_or_default(),
+            },
+            state: r.state,
+            submitted_at: r.submitted_at,
+        }).collect())
+    }
 }
 
 // Response types for API calls
@@ -621,4 +648,17 @@ struct CommitAuthor {
     name: String,
     #[serde(default)]
     date: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ReviewResponse {
+    user: ReviewUser,
+    state: String,
+    submitted_at: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ReviewUser {
+    login: String,
+    avatar_url: Option<String>,
 }
