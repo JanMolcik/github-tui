@@ -358,21 +358,13 @@ impl App {
 
     // Spawn async tasks for fetching data
     fn spawn_fetch_current_user(&self) {
-        if let Some(tx) = self.async_tx.clone() {
+        if let (Some(client), Some(tx)) = (self.client.clone(), self.async_tx.clone()) {
             tokio::spawn(async move {
-                let output = tokio::process::Command::new("gh")
-                    .args(["api", "user", "--jq", ".login"])
-                    .output()
-                    .await;
-
-                match output {
-                    Ok(o) if o.status.success() => {
-                        let user = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                        if !user.is_empty() {
-                            let _ = tx.send(AsyncMsg::UserLoaded(user));
-                        }
+                match client.get_current_user().await {
+                    Ok(user) => {
+                        let _ = tx.send(AsyncMsg::UserLoaded(user));
                     }
-                    _ => {
+                    Err(_) => {
                         // Silently ignore - filter will just show all PRs
                     }
                 }
