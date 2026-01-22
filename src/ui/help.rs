@@ -10,8 +10,6 @@ use crate::app::App;
 use super::styles;
 
 pub fn render(frame: &mut Frame, _app: &App) {
-    let area = centered_rect(60, 30, frame.area());
-
     let help_text = vec![
         Line::from(Span::styled("Global Keys", styles::TEXT_BOLD)),
         Line::from(""),
@@ -180,6 +178,15 @@ pub fn render(frame: &mut Frame, _app: &App) {
         Line::from(Span::styled("Press ? or Esc to close", styles::TEXT_DIM)),
     ];
 
+    // Calculate height based on content: lines + 2 for border
+    let content_height = help_text.len() as u16 + 2;
+    // Use content height, but cap at terminal height - 4 for some margin
+    let popup_height = content_height.min(frame.area().height.saturating_sub(4));
+    // Width: 55 chars should fit all content, cap at terminal width - 4
+    let popup_width = 55u16.min(frame.area().width.saturating_sub(4));
+
+    let area = centered_rect_fixed(popup_width, popup_height, frame.area());
+
     let help = Paragraph::new(help_text).block(
         Block::default()
             .borders(Borders::ALL)
@@ -191,22 +198,22 @@ pub fn render(frame: &mut Frame, _app: &App) {
     frame.render_widget(help, area);
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Length(area.height.saturating_sub(height) / 2),
+            Constraint::Length(height),
+            Constraint::Min(0),
         ])
         .split(area);
 
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Length(area.width.saturating_sub(width) / 2),
+            Constraint::Length(width),
+            Constraint::Min(0),
         ])
         .split(popup_layout[1])[1]
 }
