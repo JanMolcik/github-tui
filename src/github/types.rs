@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct PullRequest {
     pub number: u64,
     pub title: String,
+    #[serde(default)]
+    pub body: Option<String>,
     pub state: String,
     pub user: User,
     pub head: Branch,
@@ -159,6 +161,14 @@ impl WorkflowRun {
             },
         }
     }
+}
+
+/// A recently pushed branch that doesn't have an open PR
+#[derive(Debug, Clone)]
+pub struct RecentBranch {
+    pub name: String,
+    pub pushed_at: String,
+    pub minutes_ago: u64,
 }
 
 impl Job {

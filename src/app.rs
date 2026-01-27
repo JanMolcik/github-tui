@@ -4,9 +4,10 @@ use ratatui::prelude::*;
 use ratatui::widgets::ListState;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tui_textarea::{Input, TextArea};
 
 use crate::event::{Event, EventHandler};
-use crate::github::types::{Commit, Job, PullRequest, Review, WorkflowRun};
+use crate::github::types::{Commit, Job, PullRequest, RecentBranch, Review, WorkflowRun};
 use crate::github::Client;
 use crate::ui;
 use crate::ui::MatrixRain;
@@ -55,6 +56,7 @@ pub enum DiffMode {
 pub enum AsyncMsg {
     UserLoaded(String),
     PrsLoaded(Vec<PullRequest>),
+    RecentBranchLoaded(Option<RecentBranch>),
     RunsLoaded(Vec<WorkflowRun>),
     DiffLoaded(String),
     PrChecksLoaded(Vec<WorkflowRun>),
@@ -80,6 +82,7 @@ pub struct App {
     // PR state
     pub all_prs: Vec<PullRequest>,  // All PRs from API
     pub prs: Vec<PullRequest>,       // Filtered PRs for display
+    pub recent_branch: Option<RecentBranch>,  // Recently pushed branch without a PR
     pub pr_list_state: ListState,
     pub selected_pr: Option<PullRequest>,
     pub pr_diff: Option<String>,
@@ -123,6 +126,10 @@ pub struct App {
     pub show_help: bool,
     pub input_mode: Option<InputMode>,
     pub input_buffer: String,
+
+    // Description editor
+    pub editing_description: bool,
+    pub description_editor: Option<TextArea<'static>>,
 
     // Matrix rain animation
     pub matrix_rain: MatrixRain,
@@ -294,6 +301,12 @@ impl App {
                     if let Some(pr_number) = self.initial_pr.take() {
                         needs_select_pr = Some(pr_number);
                     }
+
+                    // Fetch recent branch after PRs are loaded (so we know which branches have PRs)
+                    self.spawn_fetch_recent_branch();
+                }
+                AsyncMsg::RecentBranchLoaded(branch) => {
+                    self.recent_branch = branch;
                 }
                 AsyncMsg::RunsLoaded(runs) => {
                     self.runs = runs;
@@ -387,6 +400,25 @@ impl App {
                 match client.list_prs(&owner, &repo).await {
                     Ok(prs) => { let _ = tx.send(AsyncMsg::PrsLoaded(prs)); }
                     Err(e) => { let _ = tx.send(AsyncMsg::Error(format!("Failed to fetch PRs: {}", e))); }
+                }
+            });
+        }
+    }
+
+    fn spawn_fetch_recent_branch(&self) {
+        if let (Some(client), Some(tx)) = (self.client.clone(), self.async_tx.clone()) {
+            let owner = self.owner.clone();
+            let repo = self.repo_name.clone();
+            let current_user = self.current_user.clone().unwrap_or_default();
+            // Collect branch names from all open PRs
+            let open_pr_branches: Vec<String> = self.all_prs.iter()
+                .map(|pr| pr.head.ref_name.clone())
+                .collect();
+
+            tokio::spawn(async move {
+                match client.find_recent_branch_without_pr(&owner, &repo, &current_user, &open_pr_branches).await {
+                    Ok(branch) => { let _ = tx.send(AsyncMsg::RecentBranchLoaded(branch)); }
+                    Err(_) => { /* Silently ignore - this is a nice-to-have feature */ }
                 }
             });
         }
@@ -502,6 +534,30 @@ impl App {
         // Handle Ctrl+C globally
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_quit = true;
+            return;
+        }
+
+        // Handle description editor mode
+        if self.editing_description {
+            if let Some(ref mut textarea) = self.description_editor {
+                match (key.modifiers, key.code) {
+                    (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
+                        // Save the description
+                        self.save_description().await;
+                    }
+                    (_, KeyCode::Esc) => {
+                        // Cancel editing
+                        self.editing_description = false;
+                        self.description_editor = None;
+                        self.set_message("Description edit cancelled");
+                    }
+                    _ => {
+                        // Pass input to textarea
+                        let input = Input::from(key);
+                        textarea.input(input);
+                    }
+                }
+            }
             return;
         }
 
@@ -715,6 +771,21 @@ impl App {
                         self.status_message = Some(StatusMessage::prompt("Edit PR title:"));
                     }
                 }
+                KeyCode::Char('E') => {
+                    // Edit PR description with built-in editor
+                    if let Some(pr) = &self.selected_pr {
+                        let content = pr.body.clone().unwrap_or_default();
+                        let mut textarea = TextArea::new(content.lines().map(|s| s.to_string()).collect());
+                        textarea.set_cursor_line_style(Style::default());
+                        textarea.set_block(
+                            ratatui::widgets::Block::default()
+                                .borders(ratatui::widgets::Borders::ALL)
+                                .title(" Edit Description [Ctrl+S: save, Esc: cancel] ")
+                        );
+                        self.description_editor = Some(textarea);
+                        self.editing_description = true;
+                    }
+                }
                 KeyCode::Char('a') => {
                     // Add reviewer
                     if self.selected_pr.is_some() {
@@ -748,6 +819,10 @@ impl App {
                 KeyCode::Char('p') => {
                     // Toggle diff mode (Full <-> ByCommit)
                     self.toggle_diff_mode();
+                }
+                KeyCode::Char('P') => {
+                    // Create PR from recent branch (if available)
+                    self.create_pr_from_recent_branch();
                 }
                 KeyCode::Char('[') => {
                     // Previous commit (in commit mode)
@@ -1255,6 +1330,26 @@ impl App {
         }
     }
 
+    fn create_pr_from_recent_branch(&mut self) {
+        let Some(branch) = &self.recent_branch else {
+            self.set_message("No recent branch to create PR from");
+            return;
+        };
+
+        let url = format!(
+            "https://github.com/{}/{}/compare/{}?expand=1",
+            self.owner, self.repo_name, branch.name
+        );
+
+        if Self::open_url(&url) {
+            self.set_message(format!("Opened PR creation for branch '{}'", branch.name));
+            // Clear the recent branch since user is creating a PR for it
+            self.recent_branch = None;
+        } else {
+            self.error = Some("Failed to open browser".to_string());
+        }
+    }
+
     async fn submit_comment(&mut self) {
         self.set_message("Comment submitted");
     }
@@ -1291,6 +1386,49 @@ impl App {
                 }
                 Err(e) => {
                     self.error = Some(format!("Failed to update title: {}", e));
+                }
+            }
+            self.loading = false;
+            self.loading_what = None;
+        }
+    }
+
+    async fn save_description(&mut self) {
+        let pr_number = match &self.selected_pr {
+            Some(pr) => pr.number,
+            None => return,
+        };
+
+        let new_body = match &self.description_editor {
+            Some(textarea) => textarea.lines().join("\n"),
+            None => return,
+        };
+
+        // Close the editor first
+        self.editing_description = false;
+        self.description_editor = None;
+
+        if let Some(client) = &self.client {
+            self.loading = true;
+            self.loading_what = Some("Updating description...".to_string());
+
+            match client.edit_pr_body(&self.owner, &self.repo_name, pr_number, &new_body).await {
+                Ok(_) => {
+                    self.set_message(format!("Updated PR #{} description", pr_number));
+                    // Update local state
+                    let body_opt = if new_body.is_empty() { None } else { Some(new_body) };
+                    if let Some(ref mut selected) = self.selected_pr {
+                        selected.body = body_opt.clone();
+                    }
+                    for p in &mut self.all_prs {
+                        if p.number == pr_number {
+                            p.body = body_opt.clone();
+                        }
+                    }
+                    self.apply_pr_filter();
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to update description: {}", e));
                 }
             }
             self.loading = false;
@@ -1549,6 +1687,7 @@ impl App {
             Tab::PRs => {
                 self.loading_what = Some("Refreshing PRs...".to_string());
                 self.spawn_fetch_prs();
+                self.spawn_fetch_recent_branch();
                 if let Some(pr) = &self.selected_pr {
                     self.spawn_fetch_pr_checks(&pr.head.sha);
                 }

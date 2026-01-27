@@ -144,6 +144,7 @@ impl Client {
             .map(|pr| PullRequest {
                 number: pr.number,
                 title: pr.title.unwrap_or_default(),
+                body: pr.body.filter(|b| !b.is_empty()),
                 state: pr.state.map(|s| format!("{:?}", s).to_lowercase()).unwrap_or_default(),
                 user: super::types::User {
                     login: pr.user.map(|u| u.login).unwrap_or_default(),
@@ -264,6 +265,26 @@ impl Client {
             Ok(())
         } else {
             Err(anyhow::anyhow!("Failed to edit PR title: {}", response.status()))
+        }
+    }
+
+    pub async fn edit_pr_body(&self, owner: &str, repo: &str, number: u64, body: &str) -> Result<()> {
+        let url = format!("{}/repos/{}/{}/pulls/{}", API_BASE, owner, repo, number);
+
+        let response = self.http
+            .patch(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", self.token))
+            .header(USER_AGENT, "github-tui")
+            .header(CONTENT_TYPE, "application/json")
+            .json(&serde_json::json!({ "body": body }))
+            .send()
+            .await
+            .context("Failed to edit PR description")?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Failed to edit PR description: {}", response.status()))
         }
     }
 
@@ -643,6 +664,81 @@ impl Client {
             submitted_at: r.submitted_at,
         }).collect())
     }
+
+    /// Find a recently pushed branch without an open PR
+    /// Returns the most recently pushed branch by the current user that doesn't have a PR
+    pub async fn find_recent_branch_without_pr(
+        &self,
+        owner: &str,
+        repo: &str,
+        current_user: &str,
+        open_pr_branches: &[String],
+    ) -> Result<Option<super::types::RecentBranch>> {
+        // Fetch recent events for the repo
+        let url = format!("{}/repos/{}/{}/events?per_page=30", API_BASE, owner, repo);
+
+        let events: Vec<EventResponse> = self.http
+            .get(&url)
+            .header(AUTHORIZATION, format!("Bearer {}", self.token))
+            .header(USER_AGENT, "github-tui")
+            .send()
+            .await
+            .context("Failed to fetch events")?
+            .json()
+            .await
+            .context("Failed to parse events response")?;
+
+        // Find push events by the current user to branches without PRs
+        let now = chrono::Utc::now();
+        let max_age_minutes = 60; // Only show branches pushed in the last hour
+
+        for event in events {
+            if event.event_type != "PushEvent" {
+                continue;
+            }
+
+            // Check if event is from the current user
+            if event.actor.login != current_user {
+                continue;
+            }
+
+            // Extract branch name from ref (refs/heads/branch-name -> branch-name)
+            let branch_name = event.payload.ref_field
+                .as_ref()
+                .and_then(|r| r.strip_prefix("refs/heads/"))
+                .map(|s| s.to_string());
+
+            let Some(branch) = branch_name else {
+                continue;
+            };
+
+            // Skip main/master branches
+            if branch == "main" || branch == "master" {
+                continue;
+            }
+
+            // Check if this branch already has a PR
+            if open_pr_branches.contains(&branch) {
+                continue;
+            }
+
+            // Parse the event time and check if it's recent
+            if let Ok(pushed_at) = chrono::DateTime::parse_from_rfc3339(&event.created_at) {
+                let age = now.signed_duration_since(pushed_at.with_timezone(&chrono::Utc));
+                let minutes_ago = age.num_minutes() as u64;
+
+                if minutes_ago <= max_age_minutes {
+                    return Ok(Some(super::types::RecentBranch {
+                        name: branch,
+                        pushed_at: event.created_at,
+                        minutes_ago,
+                    }));
+                }
+            }
+        }
+
+        Ok(None)
+    }
 }
 
 // Response types for API calls
@@ -697,4 +793,25 @@ struct ReviewResponse {
 struct ReviewUser {
     login: String,
     avatar_url: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct EventResponse {
+    #[serde(rename = "type")]
+    event_type: String,
+    actor: EventActor,
+    created_at: String,
+    #[serde(default)]
+    payload: EventPayload,
+}
+
+#[derive(serde::Deserialize)]
+struct EventActor {
+    login: String,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct EventPayload {
+    #[serde(rename = "ref")]
+    ref_field: Option<String>,
 }

@@ -26,13 +26,17 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     if let Some(ref pr) = app.selected_pr {
-        // Split into metadata, diff preview, and checks panel
+        // Calculate description height (3-6 lines depending on content)
+        let desc_height = if pr.body.is_some() { 5 } else { 0 };
+
+        // Split into metadata, description, diff preview, and checks panel
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(8),  // Metadata
-                Constraint::Min(10),    // Diff preview
-                Constraint::Length(10), // PR Checks
+                Constraint::Length(8),              // Metadata
+                Constraint::Length(desc_height),    // Description (0 if empty)
+                Constraint::Min(10),                // Diff preview
+                Constraint::Length(10),             // PR Checks
             ])
             .split(area);
 
@@ -107,12 +111,34 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
 
         frame.render_widget(meta, chunks[0]);
 
+        // Description section (only if body exists)
+        if let Some(ref body) = pr.body {
+            let desc_text = if body.len() > 200 {
+                format!("{}...", &body[..200])
+            } else {
+                body.clone()
+            };
+
+            let desc_widget = Paragraph::new(desc_text)
+                .style(styles::TEXT_NORMAL)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(detail_border)
+                        .title(" Description [E:edit] "),
+                )
+                .wrap(Wrap { trim: true });
+
+            frame.render_widget(desc_widget, chunks[1]);
+        }
+
         // Diff area - changes based on mode
+        let diff_chunk = chunks[2];
         match app.diff_mode {
             DiffMode::Full => {
                 // Full diff preview
                 if let Some(ref diff) = app.pr_diff {
-                    let diff_lines = render_diff_lines(diff, app.diff_scroll as usize, chunks[1].height as usize - 2);
+                    let diff_lines = render_diff_lines(diff, app.diff_scroll as usize, diff_chunk.height as usize - 2);
 
                     let diff_widget = Paragraph::new(diff_lines)
                         .block(
@@ -123,7 +149,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                         )
                         .wrap(Wrap { trim: false });
 
-                    frame.render_widget(diff_widget, chunks[1]);
+                    frame.render_widget(diff_widget, diff_chunk);
                 } else {
                     let placeholder = Paragraph::new("Loading diff...")
                         .style(styles::TEXT_DIM)
@@ -134,7 +160,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                                 .title(" Diff Preview [p:commits] "),
                         );
 
-                    frame.render_widget(placeholder, chunks[1]);
+                    frame.render_widget(placeholder, diff_chunk);
                 }
             }
             DiffMode::ByCommit => {
@@ -142,7 +168,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
                 let commit_chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Length(40), Constraint::Min(20)])
-                    .split(chunks[1]);
+                    .split(diff_chunk);
 
                 // Commit list
                 render_commit_list(frame, app, commit_chunks[0], detail_border);
@@ -182,7 +208,7 @@ pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         }
 
         // PR Checks panel
-        render_pr_checks(frame, app, chunks[2], checks_border);
+        render_pr_checks(frame, app, chunks[3], checks_border);
     } else {
         let placeholder = Paragraph::new("Select a PR to view details")
             .style(styles::TEXT_DIM)

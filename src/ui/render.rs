@@ -34,6 +34,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_input(frame, app);
     }
 
+    // Render description editor overlay
+    if app.editing_description {
+        render_description_editor(frame, app);
+    }
+
     // Render loading overlay with matrix rain effect
     if app.loading {
         render_loading(frame, app);
@@ -93,16 +98,62 @@ fn render_pr_content(frame: &mut Frame, app: &mut App, area: Rect) {
             pr_detail::render_full_diff(frame, app, area);
         }
         _ => {
+            // Check if we have a recent branch banner to show
+            let (banner_area, content_area) = if app.recent_branch.is_some() {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(3), Constraint::Min(0)])
+                    .split(area);
+                (Some(chunks[0]), chunks[1])
+            } else {
+                (None, area)
+            };
+
+            // Render the banner if we have a recent branch
+            if let (Some(banner_area), Some(branch)) = (banner_area, &app.recent_branch) {
+                render_recent_branch_banner(frame, branch, banner_area);
+            }
+
             // Split into list and detail
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-                .split(area);
+                .split(content_area);
 
             pr_list::render(frame, app, chunks[0]);
             pr_detail::render(frame, app, chunks[1]);
         }
     }
+}
+
+fn render_recent_branch_banner(frame: &mut Frame, branch: &crate::github::types::RecentBranch, area: Rect) {
+    let time_text = if branch.minutes_ago == 0 {
+        "just now".to_string()
+    } else if branch.minutes_ago == 1 {
+        "1 minute ago".to_string()
+    } else {
+        format!("{} minutes ago", branch.minutes_ago)
+    };
+
+    let content = Line::from(vec![
+        Span::styled("⌥ ", Style::default().fg(Color::Yellow)),
+        Span::styled(&branch.name, Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Span::styled(" had recent pushes ", styles::TEXT_DIM),
+        Span::styled(&time_text, styles::TEXT_DIM),
+        Span::styled(" │ Press ", styles::TEXT_DIM),
+        Span::styled("P", Style::default().fg(Color::Green).add_modifier(ratatui::style::Modifier::BOLD)),
+        Span::styled(" to create PR", styles::TEXT_DIM),
+    ]);
+
+    let banner = Paragraph::new(content)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow))
+                .title(" Recent Push "),
+        );
+
+    frame.render_widget(banner, area);
 }
 
 fn render_actions_content(frame: &mut Frame, app: &App, area: Rect) {
@@ -205,6 +256,20 @@ fn render_input(frame: &mut Frame, app: &App) {
 
     // Show cursor
     frame.set_cursor_position((area.x + app.input_buffer.len() as u16 + 1, area.y + 1));
+}
+
+fn render_description_editor(frame: &mut Frame, app: &mut App) {
+    // Large centered popup for description editing
+    let area = frame.area();
+    let popup_width = (area.width * 80 / 100).max(60).min(area.width - 4);
+    let popup_height = (area.height * 70 / 100).max(15).min(area.height - 4);
+    let popup_area = centered_rect(popup_width, popup_height, area);
+
+    frame.render_widget(Clear, popup_area);
+
+    if let Some(ref mut textarea) = app.description_editor {
+        frame.render_widget(&*textarea, popup_area);
+    }
 }
 
 fn render_loading(frame: &mut Frame, app: &App) {
